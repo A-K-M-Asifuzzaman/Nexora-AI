@@ -84,6 +84,7 @@ its isolation guarantees must be proven before anything is built on top.
 - [x] Tenant bootstrap exception explicitly registered; all post-onboarding queries ID-scoped
 - [x] Permission-checked warehouse CRUD with tenant isolation, branch scope, and audit events
 - [x] Invitation literal route precedence fixed; redemption verified against migration 0011 RLS
+- [x] Live frontend organization onboarding/switcher and branch list/create management shell
 - [ ] Migrations, repositories/services/API, integration suites, frontend, infrastructure
 
 # Architecture Decisions
@@ -140,6 +141,7 @@ Phase 1 (Codex, in progress):
 - `infra/postgres/init/01-roles.sh`
 - `backend/tests/structural/test_architecture_guards.py`
 - `backend/tests/integration/branches/test_warehouses.py`
+- `frontend/src/components/workspace-shell.tsx`, `frontend/src/components/workspace-shell.test.tsx`
 
 # Tests Added
 
@@ -162,6 +164,7 @@ Phase 1 (Codex, initial slice):
 - 1 behavioral anonymous-access sweep across every protected OpenAPI operation
 - 2 live tenant-settings tests for cross-tenant isolation and immutable-field rejection
 - 3 warehouse integration tests covering CRUD, cross-tenant access/linking, and mass assignment
+- 1 frontend onboarding-state test; Vitest alias made safe for workspace paths containing spaces
 
 # Commands Verified
 
@@ -284,6 +287,14 @@ Codex warehouse/invitation-integration slice:
 .venv/bin/pytest tests/unit tests/structural -q    ✅ 53 passed; dependency warnings
 alembic upgrade head                               ✅ migration 0011 applied
 .venv/bin/pytest tests/integration -q              ✅ 72 passed; dependency warnings
+```
+
+Codex frontend organization/branch-management slice:
+```
+npm run lint                                      ✅ zero warnings
+npm run typecheck                                 ✅ route generation + strict TS passed
+npm run test                                      ✅ 2 tests passed
+npm run build                                     ✅ Next.js 16.3.3; 9 routes
 ```
 DATABASE_URL=... .venv/bin/python -m pytest tests/integration -q
                                                     ✅ 7 passed
