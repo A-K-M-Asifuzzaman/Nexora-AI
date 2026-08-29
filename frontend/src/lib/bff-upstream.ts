@@ -76,8 +76,33 @@ async function rotate(sessionId: string, staleToken: string): Promise<RefreshOut
     const payload = await response.json() as { access_token?: string };
     const refresh = refreshFrom(response);
     if (!payload.access_token || !refresh) return { status: "failed" };
-    await writeSession(payload.access_token, refresh);
-    return { status: "refreshed", accessToken: payload.access_token };
+
+    // The refreshed token is tenant-agnostic by design (ARCHITECTURE.md §4.3),
+    // so on its own it makes every tenant-scoped call return
+    // 403 NO_ACTIVE_TENANT. Re-bind to the organization this session had
+    // selected. Without this the user silently loses their organization every
+    // time the 15-minute access token expires.
+    let access = payload.access_token;
+    const tenantId = latest.session.activeTenantId;
+    if (tenantId) {
+      const rebound = await fetch(`${backend}/api/v1/auth/switch-tenant`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${access}` },
+        body: JSON.stringify({ tenant_id: tenantId }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+      });
+      if (rebound.ok) {
+        const body = await rebound.json() as { access_token?: string };
+        if (body.access_token) access = body.access_token;
+      }
+      // A failure here is not fatal: membership may have been revoked while the
+      // token was expiring, which is exactly when the user *should* drop back to
+      // choosing an organization rather than being logged out entirely.
+    }
+
+    await writeSession(access, refresh, tenantId ?? null);
+    return { status: "refreshed", accessToken: access };
   } finally {
     await releaseRefreshLock(sessionId, lockOwner);
   }
@@ -118,7 +143,15 @@ export async function proxyUpstream(request: Request, path: string[]): Promise<R
     const json = JSON.parse(payload) as Record<string, unknown>;
     if (typeof json.access_token === "string") {
       const latest = await readSession();
-      if (latest) await writeSession(json.access_token, latest.session.refreshToken);
+      if (latest) {
+        // `switch-tenant` returns the newly selected organization; remembering
+        // it here is what lets a later refresh re-bind to the same one.
+        const selected =
+          typeof json.active_tenant_id === "string"
+            ? json.active_tenant_id
+            : latest.session.activeTenantId ?? null;
+        await writeSession(json.access_token, latest.session.refreshToken, selected);
+      }
       delete json.access_token;
     }
     return Response.json(json, { status: response.status });

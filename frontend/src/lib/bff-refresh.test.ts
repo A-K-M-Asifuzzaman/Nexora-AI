@@ -154,3 +154,69 @@ describe("single-flight refresh: holder and waiter", () => {
     expect(Date.now() - started).toBeLessThan(REFRESH_WAIT_MS);
   }, 10_000);
 });
+
+describe("refresh re-binds the active organization", () => {
+  beforeEach(() => { jar.clear(); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("calls switch-tenant after refreshing so the tenant survives", async () => {
+    // ARCHITECTURE.md §4.3 makes the refresh session tenant-agnostic, so the
+    // refreshed token carries no tenant and every scoped call would return
+    // 403 NO_ACTIVE_TENANT. Measured before this fix: /customers, /products and
+    // /sales/receivables all 403'd after a single refresh, which happens
+    // automatically every 15 minutes.
+    const id = await seed("stale", "refresh-1");
+    await writeSession("stale", "refresh-1", "tenant-abc");
+
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      calls.push(url);
+      if (url.includes("/auth/refresh")) {
+        return new Response(JSON.stringify({ access_token: "tenantless" }), {
+          status: 200,
+          headers: { "set-cookie": "nexora_rt=refresh-2; Path=/" },
+        });
+      }
+      if (url.includes("/auth/switch-tenant")) {
+        return Response.json({ access_token: "rebound-to-tenant" }, { status: 200 });
+      }
+      const auth = new Headers(init?.headers).get("Authorization");
+      return auth === "Bearer stale"
+        ? Response.json({ error: { code: "TOKEN_EXPIRED" } }, { status: 401 })
+        : Response.json({ items: [] }, { status: 200 });
+    }));
+
+    const response = await proxyUpstream(get(), ["customers"]);
+    expect(response.status).toBe(200);
+    expect(calls.some((url) => url.includes("/auth/switch-tenant"))).toBe(true);
+
+    // The re-bound token, not the tenantless one, is what gets stored.
+    const after = await readSession();
+    expect(after?.session.accessToken).toBe("rebound-to-tenant");
+    expect(after?.session.activeTenantId).toBe("tenant-abc");
+    expect(id).toBeTruthy();
+  }, 10_000);
+
+  it("does not call switch-tenant when no organization was selected", async () => {
+    await seed("stale", "refresh-1");
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      calls.push(url);
+      if (url.includes("/auth/refresh")) {
+        return new Response(JSON.stringify({ access_token: "fresh" }), {
+          status: 200,
+          headers: { "set-cookie": "nexora_rt=refresh-2; Path=/" },
+        });
+      }
+      const auth = new Headers(init?.headers).get("Authorization");
+      return auth === "Bearer stale"
+        ? Response.json({ error: { code: "TOKEN_EXPIRED" } }, { status: 401 })
+        : Response.json({ items: [] }, { status: 200 });
+    }));
+
+    await proxyUpstream(get(), ["auth/me"]);
+    expect(calls.some((url) => url.includes("/auth/switch-tenant"))).toBe(false);
+  }, 10_000);
+});

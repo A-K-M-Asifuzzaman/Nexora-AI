@@ -11,7 +11,16 @@ export const CSRF_COOKIE = "nexora_csrf";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
 const REFRESH_POLL_MS = 100;
 
-type Session = { accessToken: string; refreshToken: string };
+/**
+ * `activeTenantId` is the BFF's memory of which organization the user selected.
+ *
+ * `ARCHITECTURE.md` §4.3 makes the refresh session deliberately tenant-agnostic:
+ * the tenant lives in the signed `tid` claim, never "re-derived from a mutable
+ * header". So a refresh legitimately returns a token with no tenant, and
+ * something has to re-bind it. That something is the BFF, which is the only
+ * party holding session state the browser cannot forge.
+ */
+type Session = { accessToken: string; refreshToken: string; activeTenantId?: string | null };
 
 /**
  * The result of trying to refresh a session.
@@ -120,11 +129,15 @@ export async function readSession(): Promise<{ id: string; session: Session } | 
   return session ? { id, session } : null;
 }
 
-export async function writeSession(accessToken: string, refreshToken: string): Promise<void> {
+export async function writeSession(
+  accessToken: string,
+  refreshToken: string,
+  activeTenantId?: string | null,
+): Promise<void> {
   const jar = await cookies();
   const current = validSignedId(jar.get(SESSION_COOKIE)?.value);
   const id = current ?? randomBytes(32).toString("base64url");
-  await (await client()).set(`bff:session:${id}`, encrypt({ accessToken, refreshToken }), {
+  await (await client()).set(`bff:session:${id}`, encrypt({ accessToken, refreshToken, activeTenantId: activeTenantId ?? null }), {
     EX: SESSION_SECONDS,
   });
   const secure = process.env.NODE_ENV === "production";

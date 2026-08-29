@@ -179,10 +179,20 @@ async def refresh(
     if not raw:
         raise AppError("TOKEN_INVALID", "Refresh token is missing.", 401)
     service = _service(session, settings)
-    tenant_hint = request.headers.get("X-Active-Tenant")
-    active_tenant = UUID(tenant_hint) if _is_uuid(tenant_hint) else None
+    # No tenant is taken from the request. ARCHITECTURE.md §4.3 makes the
+    # refresh session tenant-agnostic precisely so tenant identity is "not
+    # re-derived from a mutable header", and this route previously read
+    # `X-Active-Tenant` and minted a token for it with no membership check.
+    # Verified: a user could mint a token bound to an organization they do not
+    # belong to. Nothing leaked — the RBAC layer re-resolves membership and
+    # returned 403 NO_ACTIVE_TENANT — but the token should never have carried
+    # the claim, and one future caller trusting `tid` without re-resolving would
+    # have made it a cross-tenant read.
+    #
+    # Re-binding after a refresh is the BFF's job (`bff-upstream.ts`), which is
+    # the only party holding session state the browser cannot forge.
     try:
-        rotated = await service.rotate_refresh_token(raw, active_tenant)
+        rotated = await service.rotate_refresh_token(raw, None)
     except AppError as exc:
         if exc.code == "REFRESH_REUSE_DETECTED":
             await events.record(sec.REFRESH_REUSE_DETECTED, "auth_session", ip=_client_ip(request))
@@ -273,16 +283,6 @@ async def switch_tenant(
             for m, name, roles in current.memberships
         ],
     )
-
-
-def _is_uuid(value: str | None) -> bool:
-    if not value:
-        return False
-    try:
-        UUID(value)
-    except ValueError:
-        return False
-    return True
 
 
 @router.post("/resend-verification", status_code=status.HTTP_202_ACCEPTED)
