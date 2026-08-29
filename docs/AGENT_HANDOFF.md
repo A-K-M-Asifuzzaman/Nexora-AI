@@ -88,6 +88,7 @@ its isolation guarantees must be proven before anything is built on top.
 - [x] Distributed BFF refresh single-flight lock with owner-safe release and stale-session recheck
 - [x] Refresh bounds ordered and asserted at load; timeout separated from failure so a slow refresh no longer logs the user out
 - [x] Live team invitation UI with server-provided role selection and permission-safe degradation
+- [x] Public invitation-acceptance page and fixed-path BFF proxy supporting links or pasted codes
 - [ ] Migrations, repositories/services/API, integration suites, frontend, infrastructure
 
 # Architecture Decisions
@@ -147,6 +148,8 @@ Phase 1 (Codex, in progress):
 - `frontend/src/components/workspace-shell.tsx`, `frontend/src/components/workspace-shell.test.tsx`
 - `frontend/src/lib/bff-session.ts`, `frontend/src/lib/bff-upstream.ts`
 - `frontend/src/lib/bff-session.test.ts`, `frontend/src/lib/bff-refresh.test.ts`
+- `frontend/src/app/invite/accept/page.tsx`, `frontend/src/app/api/bff/invitations/accept/route.ts`
+- `frontend/src/components/invitation-accept-form.tsx`, `frontend/src/components/invitation-accept-form.test.tsx`
 - `.github/workflows/ci.yml`
 - `.env.example`, `docs/API.md` §4.1 (Claude, BUILD 14)
 
@@ -175,6 +178,7 @@ Phase 1 (Codex, initial slice):
 - 5 real-Redis BFF refresh-lock tests covering exclusivity, release, session separation, and lock ownership
 - 6 BFF holder/waiter tests: bound ordering, slow-holder handoff, timeout preserving the session, upstream rejection clearing it, refresh abort, vanished session (4 verified failing pre-fix)
 - 1 frontend team-invitation test asserting the server role id and email payload
+- 2 frontend invitation-redemption tests covering role-field absence and pasted-code fallback
 
 # Commands Verified
 
@@ -324,6 +328,15 @@ npm run test                                      ✅ 8 passed across 3 files
 npm run build                                     ✅ Next.js 16.3.3; 9 routes
 npm audit --audit-level=high                      ✅ 0 vulnerabilities
 ```
+
+Codex frontend invitation-acceptance slice:
+```
+npm run lint                                      ✅ zero warnings
+npm run typecheck                                 ✅ route generation + strict TS passed
+npm run test                                      ✅ 16 passed across 5 files
+npm run build                                     ✅ Next.js 16.3.3; 11 routes
+npm audit --audit-level=high                      ✅ 0 vulnerabilities
+```
 DATABASE_URL=... .venv/bin/python -m pytest tests/integration -q
                                                     ✅ 7 passed
 .venv/bin/ruff format/check                        ✅ 80 files / all checks passed
@@ -403,6 +416,128 @@ verification, reset, invitation, and resend email flows can be completed safely.
 All of Phase 1, per the handoff below.
 
 ---
+
+---
+
+# CLAUDE REVIEW 15 — invitation accept flow; §11 headers were missing entirely
+
+Reviewed the invitation accept surface (`/invite/accept`, the literal BFF accept
+route, `invitation-accept-form.tsx`). **The flow itself is sound** and I found
+nothing wrong with it:
+
+- The literal route `/api/bff/invitations/accept` takes precedence over the
+  `[...path]` catch-all, so redemption bypasses CSRF and session lookup while
+  `POST /invitations/` still goes through both. That split is correct —
+  redemption is pre-session and the token *is* the authorization, so a CSRF
+  check there would be checking a cookie that cannot exist.
+- No `role_id` anywhere in the accept body. The role comes off the stored
+  invitation, as BUILD 12 requires.
+- Errors are rendered from the envelope, and the backend already returns one
+  identical message for unknown / revoked / expired / accepted, so the UI does
+  not reintroduce enumeration.
+- The password field is sent but ignored for an existing account, and the hint
+  text says so.
+
+Looking at it did surface something larger that is not Codex's doing.
+
+## P1-37 — SECURITY.md §11 headers were absent from every browser-facing response
+
+**Files:** `frontend/next.config.ts` (was 8 lines, no `headers()`), no middleware
+
+§11 requires `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+`Referrer-Policy: strict-origin-when-cross-origin`, and a CSP without
+`unsafe-eval`.
+
+`backend/app/main.py:31-33` sets the first three — on `/api/v1` JSON, which the
+BFF consumes server-to-server and **no browser ever renders**. Framing,
+sniffing and referrer leakage are properties of the *document*. Every document
+in this app is served by Next, and Next was sending none of them.
+
+So the control was specified, implemented, and applied to the one surface where
+it does nothing. That is the third instance of this exact shape in the project —
+the rate limiter wired to nothing, the tenant guard never imported, and now
+this. Worth naming as a pattern: **a security control is not in place until you
+have checked it on the response the attacker actually receives.**
+
+The sharpest consequence was clickjacking. `/workspace` holds create-branch,
+invite-member and switch-tenant forms behind an ambient session cookie — the
+precise shape framing attacks target.
+
+**Fixed** — `headers()` in `next.config.ts` over `/:path*`. Verified by
+enforcement, not declaration, against a running production build:
+
+```
+$ curl -si http://127.0.0.1:3987/invite/accept?token=abc
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: strict-origin-when-cross-origin
+```
+
+**The CSP half is deliberately not done.** Doing it properly needs a per-request
+nonce through middleware, because Next injects inline bootstrap scripts and the
+alternative is `script-src 'unsafe-inline'`, which buys little. §11 forbids
+`unsafe-eval` but Next's dev server requires it, so the policy must also be
+production-only. A CSP shipped without loading the app in a real browser is
+likelier to break the app than to protect it, and I cannot do that here — so I
+stopped rather than guess. `security-headers.test.ts` asserts no CSP is
+declared, so the test **fails the moment one lands** and forces this finding
+closed rather than leaving it quietly open. Still P1.
+
+## P2-38 — the invitation token travels in the query string
+
+**File:** `frontend/src/app/invite/accept/page.tsx:4-5`
+
+The accept page reads a 256-bit one-time credential from `?token=`. The
+`Referrer-Policy` above closes the cross-origin `Referer` leak, but a query
+string is still recorded by everything that logs a URL — and `ARCHITECTURE.md`
+§20 puts a TLS-terminating reverse proxy in front, whose default log formats
+record the full request URI.
+
+That persists a plaintext one-time credential in the proxy access log, readable
+by anyone with log access, for the invitation's whole validity window. The
+project already treats this exact trade as blocking: putting the raw token in
+`outbox_events.payload` was rejected under `# Known Problems` for being
+"a plaintext credential". A log line is the same credential in a less guarded
+place.
+
+**Recommended fix:** deliver it in the URL *fragment* — `/invite/accept#token=…`
+— which browsers never send to any server, so it reaches no log and no proxy.
+The form already handles an absent token by prompting for a manual invitation
+code, so the component is most of the way there; the page becomes a client
+component reading `location.hash`. The backend email template changes with it,
+which is why this is a design note rather than something I have changed.
+
+Not urgent — the token is single-use and expiring, and exploiting it needs log
+access. It should not reach production.
+
+## Verification
+
+```
+npm run lint       clean
+npm run typecheck  clean
+npm run test       19 passed across 6 files
+npm run build      Next.js 16.3.3
+```
+
+## Open
+
+| # | Finding | Severity |
+|---|---|---|
+| P1-37 | CSP still absent (three §11 headers now fixed) | **P1** |
+| P2-38 | invitation token in query string reaches proxy logs | P2 |
+| P2-21 | source-string tenant-scope guard → behavioural test | P2 |
+| P2-22 | unset-GUC test vacuous on empty DB | P2 |
+| P2-28 | blanket IntegrityError mislabelling | P2 |
+| P2-29 | `01-roles.sh` needs superuser (CI unaffected) | P2 |
+| P2-32 | per-IP limits collapse behind a proxy | **pre-production blocker** |
+| P3-24 | hardcoded system-role count | P3 |
+| P3-26 | self-suspension permitted | P3 |
+
+**The outbox dispatch worker remains the largest gap in Phase 1**, and the
+invitation UI that just landed makes it concrete: a user can now be invited
+through a working form, and the invitation email is queued and never sent. The
+accept page they would land on cannot be reached. That feature is complete on
+both ends and connected by nothing.
 
 ---
 
