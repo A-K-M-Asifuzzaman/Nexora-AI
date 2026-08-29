@@ -28,5 +28,7 @@ class DocumentSequence(UUIDPk, TenantScoped, Timestamped, Base):
     # Fiscal-year bucket, e.g. "2026". Numbering restarts per period, which is
     # what "gapless per tenant per series per fiscal year" means in §10.
     period: Mapped[str] = mapped_column(String(16), nullable=False)
-    next_value: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1, server_default="1")
+    next_value: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=1, server_default="1"
+    )
     prefix: Mapped[str] = mapped_column(String(16), nullable=False, default="", server_default="")
