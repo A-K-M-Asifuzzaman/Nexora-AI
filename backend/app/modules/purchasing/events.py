@@ -1,0 +1,7 @@
+PURCHASE_ORDER_CREATED = "purchases.order_created"
+PURCHASE_ORDER_CONFIRMED = "purchases.order_confirmed"
+PURCHASE_ORDER_CANCELLED = "purchases.order_cancelled"
+GOODS_RECEIPT_POSTED = "purchases.goods_receipt_posted"
+SUPPLIER_BILL_CREATED = "purchases.bill_created"
+SUPPLIER_BILL_ISSUED = "purchases.bill_issued"
+SUPPLIER_PAYMENT_RECORDED = "purchases.payment_recorded"

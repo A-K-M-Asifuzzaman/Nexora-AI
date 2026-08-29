@@ -9,6 +9,7 @@ from app.modules.inventory.router import router as inventory_router
 from app.modules.invitations.router import router as invitations_router
 from app.modules.members.router import router as members_router
 from app.modules.parties.router import router as parties_router
+from app.modules.purchasing.router import router as purchasing_router
 from app.modules.rbac.router import router as roles_router
 from app.modules.sales.router import router as sales_router
 from app.modules.tenancy.router import router as tenancy_router
@@ -23,6 +24,7 @@ router.include_router(invitations_router)
 router.include_router(inventory_router)
 router.include_router(parties_router)
 router.include_router(sales_router)
+router.include_router(purchasing_router)
 router.include_router(members_router)
 router.include_router(roles_router)
 router.include_router(audit_router)
