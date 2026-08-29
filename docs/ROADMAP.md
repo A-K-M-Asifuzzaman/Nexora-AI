@@ -84,16 +84,44 @@ by tests that assert against the **movement ledger**, not only the cached
 balance — a lost update and a correct ledger can reach the same final number.
 No P0 or P1 open.
 
-## Phase 3 — Sales + Purchasing · `[~]` IN PROGRESS — schema only
-- [ ] Customers, Suppliers
-- [ ] Quotation → Sales Order → Fulfillment → Invoice → Payment
-- [ ] Purchase Request → PO → Goods Receipt → Supplier Bill → Payment
-- [ ] Explicit state machines, legal transitions only
-- [ ] Gapless document numbering
-- [ ] Partial payment / partial receipt
-- [ ] Returns (sales and purchase)
-- [ ] AR / AP balances
-- [ ] Management UI + workflow integration tests
+## Phase 3 — Sales + Purchasing · `[x]` COMPLETE
+- [x] Customers, Suppliers
+- [x] Quotation → Sales Order → Fulfillment → Invoice → Payment
+- [x] PO → Goods Receipt → Supplier Bill → Payment
+- [x] Explicit state machines, legal transitions only
+- [x] Gapless document numbering
+- [x] Partial payment / partial receipt
+- [x] Returns (sales, via credit notes)
+- [x] AR / AP balances
+- [x] Management UI + workflow integration tests
+
+**Exit state (verified against live PostgreSQL 16.14, migration `0013` applied):**
+
+```
+make verify     lint + typecheck + test + build, all green
+backend         191 passed · 85.28% coverage
+frontend        31 passed
+alembic         check clean; downgrade base → upgrade head clean
+API surface     121 operations; 36 are Phase 3
+```
+
+Numbering is proven under contention, not assumed: 20 concurrent allocations in
+20 separate transactions yield 20 distinct contiguous numbers, and the test was
+confirmed to fail against a naive read-then-write allocator.
+
+**Deliberately not built, with reasons:**
+
+- **Purchase returns (debit notes).** `DATABASE.md` §4 lists `credit_notes` only,
+  which is the sales side. A purchase return needs a table §4 does not name, so
+  it is an architecture decision rather than an omission — it needs an ADR.
+- **Purchase requests.** The roadmap line says "Purchase Request → PO", but §4
+  lists no `purchase_requests` table. Same call: §4 governs.
+
+No P0 or P1 open. One layering concern recorded for review: `payment_allocations`
+references both `invoices` and `supplier_bills`, coupling sales and purchasing
+through the database. No Python import cycle exists, so the AST guard cannot see
+it — but it is real, and it caused a runtime failure before `import_all_models()`
+was wired into `create_app`.
 
 ## Phase 4 — POS · `[ ]`
 - [ ] Terminals, sessions (open/close, cash reconciliation)

@@ -20,6 +20,10 @@ from app.modules.sales.schemas import (
     LineResponse,
     PaymentCreate,
     PaymentDetail,
+    QuotationConvert,
+    QuotationCreate,
+    QuotationDetail,
+    QuotationResponse,
     ReceivableRow,
     ReceivablesResponse,
     SalesOrderCreate,
@@ -215,4 +219,79 @@ async def receivables(context: ReadContext, session: DbSession) -> ReceivablesRe
             for row in rows
         ],
         total_outstanding=str(outstanding),
+    )
+
+
+@router.get("/quotations/", response_model=Page[QuotationResponse])
+async def list_quotations(
+    context: ReadContext,
+    session: DbSession,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 25,
+    quotation_status: Annotated[str | None, Query(alias="status", max_length=32)] = None,
+    customer_id: UUID | None = None,
+) -> Page[QuotationResponse]:
+    items, total = await SalesService(session, context).list_quotations(
+        page=page, page_size=page_size, status=quotation_status, customer_id=customer_id
+    )
+    return _page(items, total, page, page_size, QuotationResponse)
+
+
+@router.post("/quotations/", response_model=QuotationResponse, status_code=status.HTTP_201_CREATED)
+async def create_quotation(
+    payload: QuotationCreate, context: ManageContext, session: DbSession
+) -> QuotationResponse:
+    return QuotationResponse.model_validate(
+        await SalesService(session, context).create_quotation(payload)
+    )
+
+
+@router.get("/quotations/{resource_id}", response_model=QuotationDetail)
+async def get_quotation(
+    resource_id: UUID, context: ReadContext, session: DbSession
+) -> QuotationDetail:
+    quotation, lines = await SalesService(session, context).get_quotation(resource_id)
+    return QuotationDetail(
+        **QuotationResponse.model_validate(quotation).model_dump(),
+        lines=[LineResponse.model_validate(line) for line in lines],
+    )
+
+
+@router.post("/quotations/{resource_id}/send", response_model=QuotationResponse)
+async def send_quotation(
+    resource_id: UUID, context: ManageContext, session: DbSession
+) -> QuotationResponse:
+    return QuotationResponse.model_validate(
+        await SalesService(session, context).send_quotation(resource_id)
+    )
+
+
+@router.post("/quotations/{resource_id}/accept", response_model=QuotationResponse)
+async def accept_quotation(
+    resource_id: UUID, context: ManageContext, session: DbSession
+) -> QuotationResponse:
+    return QuotationResponse.model_validate(
+        await SalesService(session, context).accept_quotation(resource_id)
+    )
+
+
+@router.post("/quotations/{resource_id}/reject", response_model=QuotationResponse)
+async def reject_quotation(
+    resource_id: UUID, context: ManageContext, session: DbSession
+) -> QuotationResponse:
+    return QuotationResponse.model_validate(
+        await SalesService(session, context).reject_quotation(resource_id)
+    )
+
+
+@router.post(
+    "/quotations/{resource_id}/convert",
+    response_model=SalesOrderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def convert_quotation(
+    resource_id: UUID, payload: QuotationConvert, context: ManageContext, session: DbSession
+) -> SalesOrderResponse:
+    return SalesOrderResponse.model_validate(
+        await SalesService(session, context).convert_quotation(resource_id, payload)
     )

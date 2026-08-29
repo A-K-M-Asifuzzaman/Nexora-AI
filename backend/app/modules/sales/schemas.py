@@ -8,6 +8,7 @@ from app.modules.sales.models import (
     CreditNoteStatus,
     InvoiceStatus,
     PaymentMethod,
+    QuotationStatus,
     SalesOrderStatus,
 )
 
@@ -235,3 +236,40 @@ class ReceivableRow(_MoneyOut):
 class ReceivablesResponse(BaseModel):
     items: list[ReceivableRow]
     total_outstanding: str
+
+
+class QuotationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    customer_id: UUID
+    branch_id: UUID
+    issue_date: date
+    valid_until: date | None = None
+    notes: str | None = None
+    lines: list[LineInput] = Field(min_length=1)
+
+
+class QuotationConvert(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    warehouse_id: UUID
+    order_date: date
+
+
+class QuotationResponse(_MoneyOut):
+    id: UUID
+    quotation_number: str
+    customer_id: UUID
+    branch_id: UUID
+    status: QuotationStatus
+    issue_date: date
+    valid_until: date | None
+    net_amount: Decimal
+    tax_amount: Decimal
+    total_amount: Decimal
+    notes: str | None
+    converted_order_id: UUID | None
+
+
+class QuotationDetail(QuotationResponse):
+    lines: list[LineResponse]

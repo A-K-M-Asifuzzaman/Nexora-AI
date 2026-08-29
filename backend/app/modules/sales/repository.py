@@ -11,6 +11,8 @@ from app.modules.sales.models import (
     InvoiceLine,
     Payment,
     PaymentAllocation,
+    Quotation,
+    QuotationLine,
     SalesOrder,
     SalesOrderLine,
 )
@@ -146,3 +148,38 @@ class SalesRepository:
             """)
         )
         return [(row[0], row[1], row[2], row[3]) for row in rows]
+
+    async def quotation(self, quotation_id: UUID, *, for_update: bool = False) -> Quotation | None:
+        statement = select(Quotation).where(Quotation.id == quotation_id)
+        if for_update:
+            statement = statement.with_for_update()
+        return cast(Quotation | None, await self.session.scalar(statement))
+
+    async def quotation_lines(self, quotation_id: UUID) -> list[QuotationLine]:
+        return list(
+            await self.session.scalars(
+                select(QuotationLine)
+                .where(QuotationLine.quotation_id == quotation_id)
+                .order_by(QuotationLine.product_id)
+            )
+        )
+
+    async def list_quotations(
+        self, *, page: int, page_size: int, status: str | None, customer_id: UUID | None
+    ) -> tuple[list[Quotation], int]:
+        filters = []
+        if status:
+            filters.append(Quotation.status == status)
+        if customer_id:
+            filters.append(Quotation.customer_id == customer_id)
+        total = (
+            await self.session.scalar(select(func.count()).select_from(Quotation).where(*filters))
+        ) or 0
+        rows = await self.session.scalars(
+            select(Quotation)
+            .where(*filters)
+            .order_by(Quotation.issue_date.desc(), Quotation.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        return list(rows), total

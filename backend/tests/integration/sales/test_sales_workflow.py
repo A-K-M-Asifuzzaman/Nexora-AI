@@ -396,3 +396,89 @@ async def test_order_lines_must_be_positive(client: httpx.AsyncClient, quantity:
         },
     )
     assert response.status_code == 422
+
+
+async def _quotation(client: httpx.AsyncClient, headers: dict[str, str], ids: dict) -> dict:
+    response = await client.post(
+        "/api/v1/sales/quotations/",
+        headers=headers,
+        json={
+            "customer_id": ids["customer_id"],
+            "branch_id": ids["branch_id"],
+            "issue_date": "2026-08-29",
+            "valid_until": "2026-09-29",
+            "lines": [
+                {
+                    "product_id": ids["product_id"],
+                    "quantity": "2",
+                    "unit_price": "100.0000",
+                    "tax_rate": "0.150000",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def test_quotation_lifecycle_and_conversion(client: httpx.AsyncClient) -> None:
+    headers, ids = await workspace(client)
+    quote = await _quotation(client, headers, ids)
+    assert quote["quotation_number"].startswith("QT-")
+    assert quote["total_amount"] == "230.0000"
+    assert quote["status"] == "DRAFT"
+
+    # Converting before acceptance would let an unagreed price become an order.
+    early = await client.post(
+        f"/api/v1/sales/quotations/{quote['id']}/convert",
+        headers=headers,
+        json={"warehouse_id": ids["warehouse_id"], "order_date": "2026-08-29"},
+    )
+    assert early.status_code == 409
+
+    await client.post(f"/api/v1/sales/quotations/{quote['id']}/send", headers=headers)
+    accepted = await client.post(f"/api/v1/sales/quotations/{quote['id']}/accept", headers=headers)
+    assert accepted.json()["status"] == "ACCEPTED"
+
+    converted = await client.post(
+        f"/api/v1/sales/quotations/{quote['id']}/convert",
+        headers=headers,
+        json={"warehouse_id": ids["warehouse_id"], "order_date": "2026-08-29"},
+    )
+    assert converted.status_code == 201, converted.text
+    order = converted.json()
+    assert order["order_number"].startswith("SO-")
+    # Totals carry across unchanged: the customer agreed to this number.
+    assert order["total_amount"] == quote["total_amount"]
+
+
+async def test_a_quotation_converts_only_once(client: httpx.AsyncClient) -> None:
+    headers, ids = await workspace(client)
+    quote = await _quotation(client, headers, ids)
+    await client.post(f"/api/v1/sales/quotations/{quote['id']}/send", headers=headers)
+    await client.post(f"/api/v1/sales/quotations/{quote['id']}/accept", headers=headers)
+    body = {"warehouse_id": ids["warehouse_id"], "order_date": "2026-08-29"}
+    assert (
+        await client.post(
+            f"/api/v1/sales/quotations/{quote['id']}/convert", headers=headers, json=body
+        )
+    ).status_code == 201
+    # Converting twice would duplicate the order and, once fulfilled, ship twice.
+    second = await client.post(
+        f"/api/v1/sales/quotations/{quote['id']}/convert", headers=headers, json=body
+    )
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "ALREADY_CONVERTED"
+
+
+async def test_rejected_quotation_cannot_be_converted(client: httpx.AsyncClient) -> None:
+    headers, ids = await workspace(client)
+    quote = await _quotation(client, headers, ids)
+    await client.post(f"/api/v1/sales/quotations/{quote['id']}/send", headers=headers)
+    await client.post(f"/api/v1/sales/quotations/{quote['id']}/reject", headers=headers)
+    response = await client.post(
+        f"/api/v1/sales/quotations/{quote['id']}/convert",
+        headers=headers,
+        json={"warehouse_id": ids["warehouse_id"], "order_date": "2026-08-29"},
+    )
+    assert response.status_code == 409

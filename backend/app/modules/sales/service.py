@@ -38,6 +38,9 @@ from app.modules.sales.models import (
     Payment,
     PaymentAllocation,
     PaymentDirection,
+    Quotation,
+    QuotationLine,
+    QuotationStatus,
     SalesOrder,
     SalesOrderLine,
     SalesOrderStatus,
@@ -49,6 +52,8 @@ from app.modules.sales.schemas import (
     FulfillmentCreate,
     InvoiceCreate,
     PaymentCreate,
+    QuotationConvert,
+    QuotationCreate,
     SalesOrderCreate,
 )
 
@@ -88,6 +93,176 @@ class SalesService:
         if product is None:
             raise NotFoundError()
         return product
+
+    # ------------------------------------------------------------ quotations
+
+    async def create_quotation(self, payload: QuotationCreate) -> Quotation:
+        async with service_transaction(self.session):
+            await self._set_tenant()
+            if len({line.product_id for line in payload.lines}) != len(payload.lines):
+                raise DomainValidationError(
+                    "DUPLICATE_LINE", "A product may appear only once per quotation."
+                )
+            quotation = Quotation(
+                id=uuid7(),
+                tenant_id=self.context.tenant_id,
+                quotation_number="",
+                customer_id=payload.customer_id,
+                branch_id=payload.branch_id,
+                status=QuotationStatus.DRAFT,
+                issue_date=payload.issue_date,
+                valid_until=payload.valid_until,
+                notes=payload.notes,
+            )
+            net = tax = ZERO
+            for item in payload.lines:
+                await self._product(item.product_id)
+                line_net, line_tax, line_total = line_totals(
+                    item.quantity, item.unit_price, item.discount_rate, item.tax_rate
+                )
+                self.repository.add(
+                    QuotationLine(
+                        id=uuid7(),
+                        tenant_id=self.context.tenant_id,
+                        quotation_id=quotation.id,
+                        product_id=item.product_id,
+                        description=item.description,
+                        quantity=item.quantity,
+                        unit_price=item.unit_price,
+                        discount_rate=item.discount_rate,
+                        tax_rate=item.tax_rate,
+                        net_amount=line_net,
+                        tax_amount=line_tax,
+                        total_amount=line_total,
+                    )
+                )
+                net += line_net
+                tax += line_tax
+            quotation.net_amount, quotation.tax_amount, quotation.total_amount = (
+                net,
+                tax,
+                net + tax,
+            )
+            self.repository.add(quotation)
+            quotation.quotation_number = await NumberAllocator(
+                self.session, self.context.tenant_id
+            ).allocate("quotation", self._period())
+            self.audit.record(self.context, events.QUOTATION_CREATED, "quotation", quotation.id)
+            return quotation
+
+    async def get_quotation(self, quotation_id: UUID) -> tuple[Quotation, list[QuotationLine]]:
+        async with service_transaction(self.session):
+            await self._set_tenant()
+            quotation = await self.repository.quotation(quotation_id)
+            if quotation is None:
+                raise NotFoundError()
+            return quotation, await self.repository.quotation_lines(quotation.id)
+
+    async def list_quotations(
+        self, *, page: int, page_size: int, status: str | None, customer_id: UUID | None
+    ) -> tuple[list[Quotation], int]:
+        async with service_transaction(self.session):
+            await self._set_tenant()
+            return await self.repository.list_quotations(
+                page=page, page_size=page_size, status=status, customer_id=customer_id
+            )
+
+    async def set_quotation_status(self, quotation_id: UUID, status: QuotationStatus) -> Quotation:
+        async with service_transaction(self.session):
+            await self._set_tenant()
+            quotation = await self.repository.quotation(quotation_id, for_update=True)
+            if quotation is None:
+                raise NotFoundError()
+            legal = {
+                QuotationStatus.SENT: (QuotationStatus.DRAFT,),
+                QuotationStatus.ACCEPTED: (QuotationStatus.SENT,),
+                QuotationStatus.REJECTED: (QuotationStatus.SENT,),
+                QuotationStatus.EXPIRED: (QuotationStatus.DRAFT, QuotationStatus.SENT),
+            }
+            self._require_status(quotation.status, legal[status], f"Marking {status.value}")
+            quotation.status = status
+            self.audit.record(
+                self.context,
+                events.QUOTATION_ACCEPTED,
+                "quotation",
+                quotation.id,
+                {"status": status.value},
+            )
+            return quotation
+
+    async def send_quotation(self, quotation_id: UUID) -> Quotation:
+        return await self.set_quotation_status(quotation_id, QuotationStatus.SENT)
+
+    async def accept_quotation(self, quotation_id: UUID) -> Quotation:
+        return await self.set_quotation_status(quotation_id, QuotationStatus.ACCEPTED)
+
+    async def reject_quotation(self, quotation_id: UUID) -> Quotation:
+        return await self.set_quotation_status(quotation_id, QuotationStatus.REJECTED)
+
+    async def convert_quotation(self, quotation_id: UUID, payload: QuotationConvert) -> SalesOrder:
+        """Turn an accepted quotation into a sales order.
+
+        Only from ACCEPTED, and only once — `converted_order_id` is the guard.
+        Converting twice would duplicate the order and, once fulfilled, ship the
+        goods twice.
+        """
+        async with service_transaction(self.session):
+            await self._set_tenant()
+            quotation = await self.repository.quotation(quotation_id, for_update=True)
+            if quotation is None:
+                raise NotFoundError()
+            self._require_status(quotation.status, (QuotationStatus.ACCEPTED,), "Conversion")
+            if quotation.converted_order_id is not None:
+                raise ConflictError(
+                    "ALREADY_CONVERTED", "This quotation has already become an order."
+                )
+            lines = await self.repository.quotation_lines(quotation.id)
+
+            order = SalesOrder(
+                id=uuid7(),
+                tenant_id=self.context.tenant_id,
+                order_number="",
+                customer_id=quotation.customer_id,
+                branch_id=quotation.branch_id,
+                warehouse_id=payload.warehouse_id,
+                quotation_id=quotation.id,
+                status=SalesOrderStatus.DRAFT,
+                order_date=payload.order_date,
+                net_amount=quotation.net_amount,
+                tax_amount=quotation.tax_amount,
+                total_amount=quotation.total_amount,
+                notes=quotation.notes,
+            )
+            for line in lines:
+                self.repository.add(
+                    SalesOrderLine(
+                        id=uuid7(),
+                        tenant_id=self.context.tenant_id,
+                        sales_order_id=order.id,
+                        product_id=line.product_id,
+                        description=line.description,
+                        quantity=line.quantity,
+                        unit_price=line.unit_price,
+                        discount_rate=line.discount_rate,
+                        tax_rate=line.tax_rate,
+                        net_amount=line.net_amount,
+                        tax_amount=line.tax_amount,
+                        total_amount=line.total_amount,
+                    )
+                )
+            self.repository.add(order)
+            quotation.converted_order_id = order.id
+            order.order_number = await NumberAllocator(
+                self.session, self.context.tenant_id
+            ).allocate("sales_order", self._period())
+            self.audit.record(
+                self.context,
+                events.QUOTATION_CONVERTED,
+                "quotation",
+                quotation.id,
+                {"sales_order_id": str(order.id)},
+            )
+            return order
 
     # ---------------------------------------------------------------- orders
 
