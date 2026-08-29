@@ -17,10 +17,16 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.context import TenantContext
-from app.core.errors import ConflictError, DomainValidationError, NotFoundError
+from app.core.errors import (
+    ConflictError,
+    DomainValidationError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 from app.core.ids import uuid7
 from app.db.session import service_transaction
 from app.modules.audit.service import AuditService
+from app.modules.branches.models import Warehouse
 from app.modules.catalog.models import Product
 from app.modules.idempotency.service import IdempotencyService
 from app.modules.inventory.models import MovementType
@@ -87,6 +93,20 @@ class SalesService:
         """Fiscal-year bucket for numbering ('gapless per … per fiscal year')."""
         return str((when or datetime.now(UTC)).year)
 
+    def _require_branch(self, branch_id: UUID) -> None:
+        if self.context.branch_ids is not None and branch_id not in self.context.branch_ids:
+            raise PermissionDeniedError("BRANCH_ACCESS_DENIED", "Branch access denied.")
+
+    async def _require_warehouse(self, branch_id: UUID, warehouse_id: UUID) -> None:
+        self._require_branch(branch_id)
+        warehouse = await self.session.get(Warehouse, warehouse_id)
+        if warehouse is None:
+            raise NotFoundError()
+        if warehouse.branch_id != branch_id:
+            raise DomainValidationError(
+                "WAREHOUSE_BRANCH_MISMATCH", "Warehouse does not belong to the document branch."
+            )
+
     async def _product(self, product_id: UUID) -> Product:
         product = await self.session.get(Product, product_id)
         # A product belonging to another tenant is filtered out before this
@@ -100,6 +120,7 @@ class SalesService:
     async def create_quotation(self, payload: QuotationCreate) -> Quotation:
         async with service_transaction(self.session):
             await self._set_tenant()
+            self._require_branch(payload.branch_id)
             if len({line.product_id for line in payload.lines}) != len(payload.lines):
                 raise DomainValidationError(
                     "DUPLICATE_LINE", "A product may appear only once per quotation."
@@ -157,6 +178,7 @@ class SalesService:
             quotation = await self.repository.quotation(quotation_id)
             if quotation is None:
                 raise NotFoundError()
+            self._require_branch(quotation.branch_id)
             return quotation, await self.repository.quotation_lines(quotation.id)
 
     async def list_quotations(
@@ -165,7 +187,11 @@ class SalesService:
         async with service_transaction(self.session):
             await self._set_tenant()
             return await self.repository.list_quotations(
-                page=page, page_size=page_size, status=status, customer_id=customer_id
+                page=page,
+                page_size=page_size,
+                status=status,
+                customer_id=customer_id,
+                branch_ids=self.context.branch_ids,
             )
 
     async def set_quotation_status(self, quotation_id: UUID, status: QuotationStatus) -> Quotation:
@@ -174,6 +200,7 @@ class SalesService:
             quotation = await self.repository.quotation(quotation_id, for_update=True)
             if quotation is None:
                 raise NotFoundError()
+            self._require_branch(quotation.branch_id)
             legal = {
                 QuotationStatus.SENT: (QuotationStatus.DRAFT,),
                 QuotationStatus.ACCEPTED: (QuotationStatus.SENT,),
@@ -212,6 +239,8 @@ class SalesService:
             quotation = await self.repository.quotation(quotation_id, for_update=True)
             if quotation is None:
                 raise NotFoundError()
+            self._require_branch(quotation.branch_id)
+            await self._require_warehouse(quotation.branch_id, payload.warehouse_id)
             self._require_status(quotation.status, (QuotationStatus.ACCEPTED,), "Conversion")
             if quotation.converted_order_id is not None:
                 raise ConflictError(
@@ -270,6 +299,7 @@ class SalesService:
     async def create_order(self, payload: SalesOrderCreate) -> SalesOrder:
         async with service_transaction(self.session):
             await self._set_tenant()
+            await self._require_warehouse(payload.branch_id, payload.warehouse_id)
             if len({line.product_id for line in payload.lines}) != len(payload.lines):
                 raise DomainValidationError(
                     "DUPLICATE_LINE", "A product may appear only once per order."
@@ -330,6 +360,7 @@ class SalesService:
             order = await self.repository.order(order_id, for_update=True)
             if order is None:
                 raise NotFoundError()
+            self._require_branch(order.branch_id)
             self._require_status(order.status, (SalesOrderStatus.DRAFT,), "Confirmation")
             order.status = SalesOrderStatus.CONFIRMED
             order.confirmed_at = datetime.now(UTC)
@@ -342,6 +373,7 @@ class SalesService:
             order = await self.repository.order(order_id, for_update=True)
             if order is None:
                 raise NotFoundError()
+            self._require_branch(order.branch_id)
             # Once anything has shipped, cancelling would strand stock that has
             # already left the warehouse. Credit-note it instead.
             # PARTIALLY_FULFILLED is admitted here on purpose so the specific,
@@ -374,6 +406,7 @@ class SalesService:
             order = await self.repository.order(order_id)
             if order is None:
                 raise NotFoundError()
+            self._require_branch(order.branch_id)
             return order, await self.repository.order_lines(order.id)
 
     async def list_orders(
@@ -382,7 +415,11 @@ class SalesService:
         async with service_transaction(self.session):
             await self._set_tenant()
             return await self.repository.list_orders(
-                page=page, page_size=page_size, status=status, customer_id=customer_id
+                page=page,
+                page_size=page_size,
+                status=status,
+                customer_id=customer_id,
+                branch_ids=self.context.branch_ids,
             )
 
     # ---------------------------------------------------------- fulfillment
@@ -393,6 +430,7 @@ class SalesService:
             order = await self.repository.order(order_id, for_update=True)
             if order is None:
                 raise NotFoundError()
+            self._require_branch(order.branch_id)
             self._require_status(
                 order.status,
                 (
@@ -487,6 +525,7 @@ class SalesService:
             order = await self.repository.order(payload.sales_order_id, for_update=True)
             if order is None:
                 raise NotFoundError()
+            self._require_branch(order.branch_id)
             self._require_status(
                 order.status,
                 (
@@ -553,12 +592,24 @@ class SalesService:
             self.audit.record(self.context, events.INVOICE_CREATED, "invoice", invoice.id)
             return invoice
 
-    async def issue_invoice(self, invoice_id: UUID) -> Invoice:
+    async def issue_invoice(self, invoice_id: UUID, idempotency_key: str) -> tuple[Invoice, bool]:
         async with service_transaction(self.session):
             await self._set_tenant()
+            idempotency = IdempotencyService(self.session, self.context.tenant_id)
+            won, stored, _ = await idempotency.claim(
+                endpoint="POST /invoices/{id}/issue",
+                key=idempotency_key,
+                payload={"invoice_id": str(invoice_id)},
+            )
+            if not won and stored is not None:
+                existing = await self.repository.invoice(UUID(str(stored["id"])))
+                if existing is not None:
+                    self._require_branch(existing.branch_id)
+                    return existing, True
             invoice = await self.repository.invoice(invoice_id, for_update=True)
             if invoice is None:
                 raise NotFoundError()
+            self._require_branch(invoice.branch_id)
             self._require_status(invoice.status, (InvoiceStatus.DRAFT,), "Issuing")
             invoice.status = InvoiceStatus.ISSUED
             invoice.issued_at = datetime.now(UTC)
@@ -572,7 +623,13 @@ class SalesService:
                 invoice.id,
                 {"invoice_number": invoice.invoice_number},
             )
-            return invoice
+            await idempotency.complete(
+                endpoint="POST /invoices/{id}/issue",
+                key=idempotency_key,
+                response_status=200,
+                response_body={"id": str(invoice.id)},
+            )
+            return invoice, False
 
     async def get_invoice(self, invoice_id: UUID) -> tuple[Invoice, list[InvoiceLine]]:
         async with service_transaction(self.session):
@@ -580,6 +637,7 @@ class SalesService:
             invoice = await self.repository.invoice(invoice_id)
             if invoice is None:
                 raise NotFoundError()
+            self._require_branch(invoice.branch_id)
             return invoice, await self.repository.invoice_lines(invoice.id)
 
     async def list_invoices(
@@ -588,16 +646,21 @@ class SalesService:
         async with service_transaction(self.session):
             await self._set_tenant()
             return await self.repository.list_invoices(
-                page=page, page_size=page_size, status=status, customer_id=customer_id
+                page=page,
+                page_size=page_size,
+                status=status,
+                customer_id=customer_id,
+                branch_ids=self.context.branch_ids,
             )
 
     # -------------------------------------------------------------- payments
 
     async def record_payment(
         self, payload: PaymentCreate, idempotency_key: str | None
-    ) -> tuple[Payment, list[PaymentAllocation]]:
+    ) -> tuple[Payment, list[PaymentAllocation], bool]:
         async with service_transaction(self.session):
             await self._set_tenant()
+            self._require_branch(payload.branch_id)
             idempotency = IdempotencyService(self.session, self.context.tenant_id)
             if idempotency_key:
                 # ARCHITECTURE.md §11: the key row commits with the business
@@ -610,7 +673,7 @@ class SalesService:
                 if not won and stored is not None:
                     existing = await self.repository.payment(UUID(str(stored["id"])))
                     if existing is not None:
-                        return existing, await self.repository.allocations(existing.id)
+                        return existing, await self.repository.allocations(existing.id), True
             allocated = sum((item.amount for item in payload.allocations), ZERO)
             # ACCOUNTING.md §3.3: the sum of allocations may never exceed the
             # payment. Checked before any row is written so a rejected payment
@@ -645,6 +708,15 @@ class SalesService:
                 invoice = await self.repository.invoice(item.invoice_id, for_update=True)
                 if invoice is None:
                     raise NotFoundError()
+                self._require_branch(invoice.branch_id)
+                if (
+                    invoice.customer_id != payload.customer_id
+                    or invoice.branch_id != payload.branch_id
+                ):
+                    raise DomainValidationError(
+                        "ALLOCATION_TARGET_MISMATCH",
+                        "Payment allocations must match the payment customer and branch.",
+                    )
                 self._require_status(
                     invoice.status,
                     (InvoiceStatus.ISSUED, InvoiceStatus.PARTIALLY_PAID),
@@ -690,7 +762,7 @@ class SalesService:
                     response_status=201,
                     response_body={"id": str(payment.id)},
                 )
-            return payment, allocations
+            return payment, allocations, False
 
     # ---------------------------------------------------------- credit notes
 
@@ -700,6 +772,7 @@ class SalesService:
             invoice = await self.repository.invoice(payload.invoice_id, for_update=True)
             if invoice is None:
                 raise NotFoundError()
+            self._require_branch(invoice.branch_id)
             self._require_status(
                 invoice.status,
                 (InvoiceStatus.ISSUED, InvoiceStatus.PARTIALLY_PAID, InvoiceStatus.PAID),
@@ -709,6 +782,8 @@ class SalesService:
                 raise DomainValidationError(
                     "WAREHOUSE_REQUIRED", "A restocking credit note needs a warehouse."
                 )
+            if payload.warehouse_id is not None:
+                await self._require_warehouse(invoice.branch_id, payload.warehouse_id)
 
             note = CreditNote(
                 id=uuid7(),
@@ -727,13 +802,14 @@ class SalesService:
             )
             net = tax = ZERO
             for item in sorted(payload.lines, key=lambda entry: entry.invoice_line_id.bytes):
-                line = await self.repository.invoice_line(item.invoice_line_id)
+                line = await self.repository.invoice_line(item.invoice_line_id, for_update=True)
                 if line is None or line.invoice_id != invoice.id:
                     raise NotFoundError()
-                if item.quantity > line.quantity:
+                if item.quantity > line.quantity - line.credited_quantity:
                     raise ConflictError(
                         "OVER_CREDIT", "Cannot credit more than the invoiced quantity."
                     )
+                line.credited_quantity += item.quantity
                 line_net, line_tax, line_total = line_totals(
                     item.quantity, line.unit_price, line.discount_rate, line.tax_rate
                 )
@@ -787,6 +863,6 @@ class SalesService:
     async def receivables(self) -> tuple[list[tuple[UUID, str, Decimal, Decimal]], Decimal]:
         async with service_transaction(self.session):
             await self._set_tenant()
-            rows = await self.repository.receivables()
+            rows = await self.repository.receivables(self.context.branch_ids)
             outstanding = sum((row[2] - row[3] for row in rows), ZERO)
             return rows, outstanding

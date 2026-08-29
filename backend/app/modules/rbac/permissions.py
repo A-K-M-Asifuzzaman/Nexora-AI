@@ -38,6 +38,14 @@ class Perm(StrEnum):
     PURCHASES_RECEIVE = "purchases.receive"
     PURCHASES_BILL = "purchases.bill"
     PURCHASES_PAYMENT = "purchases.payment"
+    POS_READ = "pos.read"
+    POS_OPERATE = "pos.operate"
+    POS_SESSION = "pos.session"
+    POS_REFUND = "pos.refund"
+    ACCOUNTING_READ = "accounting.read"
+    ACCOUNTING_MANAGE = "accounting.manage"
+    ACCOUNTING_POST = "accounting.post"
+    ACCOUNTING_POST_CLOSED = "accounting.post_closed"
 
 
 PHASE_1_PERMISSIONS = tuple(permission.value for permission in Perm)

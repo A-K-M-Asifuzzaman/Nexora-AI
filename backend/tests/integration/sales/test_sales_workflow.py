@@ -10,7 +10,8 @@ import uuid
 import httpx
 import pytest
 
-from tests.integration.conftest import tenant_headers
+from tests.integration.auth.test_password_and_verification import latest_token
+from tests.integration.conftest import PASSWORD, tenant_headers
 
 
 async def workspace(client: httpx.AsyncClient) -> tuple[dict[str, str], dict[str, str]]:
@@ -159,13 +160,21 @@ async def test_draft_invoice_holds_no_number_until_issued(client: httpx.AsyncCli
     assert invoice["invoice_number"] is None
     assert invoice["status"] == "DRAFT"
 
+    key = str(uuid.uuid4())
     issued = await client.post(
         f"/api/v1/sales/invoices/{invoice['id']}/issue",
-        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        headers={**headers, "Idempotency-Key": key},
     )
     assert issued.status_code == 200, issued.text
     assert issued.json()["invoice_number"].startswith("INV-")
     assert issued.json()["status"] == "ISSUED"
+    replay = await client.post(
+        f"/api/v1/sales/invoices/{invoice['id']}/issue",
+        headers={**headers, "Idempotency-Key": key},
+    )
+    assert replay.status_code == 200
+    assert replay.json()["invoice_number"] == issued.json()["invoice_number"]
+    assert replay.headers["Idempotency-Replayed"] == "true"
 
 
 async def test_issue_requires_an_idempotency_key(client: httpx.AsyncClient) -> None:
@@ -344,6 +353,32 @@ async def test_credit_note_without_restock_leaves_stock_alone(client: httpx.Asyn
     assert after["items"][0]["quantity_on_hand"] == "7.000000"
 
 
+async def test_credit_notes_cannot_exceed_invoice_and_reduce_receivables(
+    client: httpx.AsyncClient,
+) -> None:
+    headers, ids = await workspace(client)
+    invoice = await _issued_invoice(client, headers, ids)
+    detail = (await client.get(f"/api/v1/sales/invoices/{invoice['id']}", headers=headers)).json()
+    payload = {
+        "invoice_id": invoice["id"],
+        "issue_date": "2026-08-29",
+        "reason": "CUSTOMER_RETURN",
+        "restock": True,
+        "warehouse_id": ids["warehouse_id"],
+        "lines": [{"invoice_line_id": detail["lines"][0]["id"], "quantity": "3"}],
+    }
+    first = await client.post("/api/v1/sales/credit-notes/", headers=headers, json=payload)
+    second = await client.post("/api/v1/sales/credit-notes/", headers=headers, json=payload)
+    assert first.status_code == 201, first.text
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "OVER_CREDIT"
+    balance = (await client.get("/api/v1/inventory/balances/", headers=headers)).json()["items"][0]
+    assert balance["quantity_on_hand"] == "10.000000"
+    receivables = (await client.get("/api/v1/sales/receivables", headers=headers)).json()
+    assert receivables["items"] == []
+    assert receivables["total_outstanding"] == "0"
+
+
 async def test_cannot_cancel_a_partially_fulfilled_order(client: httpx.AsyncClient) -> None:
     headers, ids = await workspace(client)
     order = await make_order(client, headers, ids)
@@ -514,6 +549,7 @@ async def test_replaying_one_payment_key_does_not_pay_twice(client: httpx.AsyncC
     assert second.status_code == 201, second.text
     # The replay returns the original payment, not a new one.
     assert second.json()["id"] == first.json()["id"]
+    assert second.headers["Idempotency-Replayed"] == "true"
 
     after = (await client.get(f"/api/v1/sales/invoices/{invoice['id']}", headers=headers)).json()
     assert after["paid_amount"] == "100.0000", after["paid_amount"]
@@ -545,3 +581,116 @@ async def test_same_key_with_a_different_body_is_rejected(client: httpx.AsyncCli
     )
     assert second.status_code == 422
     assert second.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSE"
+
+
+async def test_sales_money_and_quantity_reject_json_numbers(client: httpx.AsyncClient) -> None:
+    headers, ids = await workspace(client)
+    response = await client.post(
+        "/api/v1/sales/orders/",
+        headers=headers,
+        json={
+            "customer_id": ids["customer_id"],
+            "branch_id": ids["branch_id"],
+            "warehouse_id": ids["warehouse_id"],
+            "order_date": "2026-08-29",
+            "lines": [
+                {
+                    "product_id": ids["product_id"],
+                    "quantity": 1,
+                    "unit_price": 100.0,
+                }
+            ],
+        },
+    )
+    assert response.status_code == 422
+
+
+async def test_branch_restricted_actor_cannot_read_or_create_other_branch_documents(
+    client: httpx.AsyncClient,
+) -> None:
+    owner_headers, ids = await workspace(client)
+    allowed_order = await make_order(client, owner_headers, ids)
+    second_branch = await client.post(
+        "/api/v1/branches/",
+        headers=owner_headers,
+        json={"code": "B2", "name": "Second Branch"},
+    )
+    second_warehouse = await client.post(
+        "/api/v1/warehouses/",
+        headers=owner_headers,
+        json={
+            "branch_id": second_branch.json()["id"],
+            "code": "B2-WH",
+            "name": "Second Warehouse",
+        },
+    )
+    other_ids = {
+        **ids,
+        "branch_id": second_branch.json()["id"],
+        "warehouse_id": second_warehouse.json()["id"],
+    }
+    other_order = await make_order(client, owner_headers, other_ids)
+
+    role = await client.post(
+        "/api/v1/roles/",
+        headers=owner_headers,
+        json={
+            "code": "BRANCHSELLER",
+            "name": "Branch Seller",
+            "permission_codes": ["sales.read", "sales.manage"],
+        },
+    )
+    email = f"branch-sales-{uuid.uuid4().hex[:10]}@example.com"
+    await client.post(
+        "/api/v1/invitations/",
+        headers=owner_headers,
+        json={"email": email, "role_id": role.json()["id"]},
+    )
+    token = await latest_token(email, "invitation")
+    await client.post(
+        "/api/v1/invitations/accept",
+        json={"token": token, "full_name": "Branch Seller", "password": PASSWORD},
+    )
+    member = next(
+        item
+        for item in (await client.get("/api/v1/members/", headers=owner_headers)).json()
+        if item["email"] == email
+    )
+    await client.patch(
+        f"/api/v1/members/{member['id']}/branches",
+        headers=owner_headers,
+        json={"branch_ids": [ids["branch_id"]]},
+    )
+    tenant_id = (await client.get("/api/v1/tenants/current", headers=owner_headers)).json()["id"]
+    login = await client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD})
+    switched = await client.post(
+        "/api/v1/auth/switch-tenant",
+        headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        json={"tenant_id": tenant_id},
+    )
+    restricted = {"Authorization": f"Bearer {switched.json()['access_token']}"}
+
+    listing = await client.get("/api/v1/sales/orders/", headers=restricted)
+    assert {item["id"] for item in listing.json()["items"]} == {allowed_order["id"]}
+    assert (
+        await client.get(f"/api/v1/sales/orders/{other_order['id']}", headers=restricted)
+    ).status_code == 403
+    forbidden = await client.post(
+        "/api/v1/sales/orders/",
+        headers=restricted,
+        json={
+            "customer_id": ids["customer_id"],
+            "branch_id": other_ids["branch_id"],
+            "warehouse_id": other_ids["warehouse_id"],
+            "order_date": "2026-08-29",
+            "lines": [
+                {
+                    "product_id": ids["product_id"],
+                    "quantity": "1",
+                    "unit_price": "100.0000",
+                }
+            ],
+        },
+    )
+    assert forbidden.status_code == 403
+    assert forbidden.json()["error"]["code"] == "BRANCH_ACCESS_DENIED"

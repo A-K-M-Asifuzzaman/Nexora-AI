@@ -316,3 +316,27 @@ async def test_purchasing_documents_are_tenant_isolated(client: httpx.AsyncClien
         await client.get(f"/api/v1/purchases/orders/{order['id']}", headers=other)
     ).status_code == 404
     assert (await client.get("/api/v1/purchases/orders/", headers=other)).json()["total"] == 0
+
+
+async def test_purchase_money_and_quantity_reject_json_numbers(
+    client: httpx.AsyncClient,
+) -> None:
+    headers, ids = await workspace(client)
+    response = await client.post(
+        "/api/v1/purchases/orders/",
+        headers=headers,
+        json={
+            "supplier_id": ids["supplier_id"],
+            "branch_id": ids["branch_id"],
+            "warehouse_id": ids["warehouse_id"],
+            "order_date": "2026-08-29",
+            "lines": [
+                {
+                    "product_id": ids["product_id"],
+                    "quantity": 1,
+                    "unit_cost": 40.0,
+                }
+            ],
+        },
+    )
+    assert response.status_code == 422

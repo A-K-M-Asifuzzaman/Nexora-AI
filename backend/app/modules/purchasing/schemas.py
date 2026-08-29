@@ -2,10 +2,26 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from app.modules.purchasing.models import PurchaseOrderStatus, SupplierBillStatus
 from app.modules.sales.models import PaymentMethod
+
+
+class _StrictInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def decimals_are_strings(cls, value: object, info: object) -> object:
+        field_name = getattr(info, "field_name", "")
+        if (
+            field_name in {"quantity", "unit_cost", "tax_rate", "amount"}
+            and value is not None
+            and not isinstance(value, str)
+        ):
+            raise ValueError("Money, quantity, and rate values must be JSON strings.")
+        return value
 
 
 class _MoneyOut(BaseModel):
@@ -18,13 +34,11 @@ class _MoneyOut(BaseModel):
         return str(value) if isinstance(value, Decimal) else value
 
 
-class PurchaseLineInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class PurchaseLineInput(_StrictInput):
     product_id: UUID
-    quantity: Decimal = Field(gt=0)
-    unit_cost: Decimal = Field(ge=0)
-    tax_rate: Decimal = Field(default=Decimal("0"), ge=0, le=1)
+    quantity: Decimal = Field(gt=0, max_digits=20, decimal_places=6)
+    unit_cost: Decimal = Field(ge=0, max_digits=18, decimal_places=6)
+    tax_rate: Decimal = Field(default=Decimal("0"), ge=0, le=1, max_digits=9, decimal_places=6)
     description: str | None = None
 
 
@@ -73,15 +87,13 @@ class PurchaseOrderDetail(PurchaseOrderResponse):
     lines: list[PurchaseOrderLineResponse]
 
 
-class ReceiptLineInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class ReceiptLineInput(_StrictInput):
     purchase_order_line_id: UUID
-    quantity: Decimal = Field(gt=0)
+    quantity: Decimal = Field(gt=0, max_digits=20, decimal_places=6)
     # Optional override: the price actually invoiced can differ from the price
     # ordered, and the weighted average must reflect what was really paid
     # (ADR-0018). Omitted means "as ordered".
-    unit_cost: Decimal | None = Field(default=None, ge=0)
+    unit_cost: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=6)
 
 
 class GoodsReceiptCreate(BaseModel):
@@ -145,20 +157,16 @@ class SupplierBillDetail(SupplierBillResponse):
     lines: list[SupplierBillLineResponse]
 
 
-class BillAllocationInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class BillAllocationInput(_StrictInput):
     supplier_bill_id: UUID
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=4)
 
 
-class SupplierPaymentCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class SupplierPaymentCreate(_StrictInput):
     supplier_id: UUID
     branch_id: UUID
     method: PaymentMethod
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=4)
     payment_date: date
     reference: str | None = Field(default=None, max_length=120)
     notes: str | None = None

@@ -1,3 +1,11 @@
+from app.modules.accounting.models import (
+    Account,
+    FiscalPeriod,
+    Journal,
+    JournalEntry,
+    JournalEntryLine,
+    ProductCostLayer,
+)
 from app.modules.audit.models import AuditEvent
 from app.modules.branches.models import Branch, Warehouse
 from app.modules.catalog.models import (
@@ -20,6 +28,17 @@ from app.modules.inventory.models import (
 )
 from app.modules.numbering.models import DocumentSequence
 from app.modules.parties.models import Customer, Supplier
+from app.modules.pos.models import (
+    HeldSale,
+    PosSession,
+    PosTerminal,
+    Receipt,
+    Sale,
+    SaleLine,
+    SalePayment,
+    SaleReturn,
+    SaleReturnLine,
+)
 from app.modules.purchasing.models import (
     GoodsReceipt,
     GoodsReceiptLine,
@@ -89,6 +108,22 @@ TENANT_ISOLATION_MODELS: dict[type[object], str] = {
     GoodsReceiptLine: "goods receipt lines",
     SupplierBill: "supplier bills",
     SupplierBillLine: "supplier bill lines",
+    PosTerminal: "POS terminals",
+    PosSession: "POS sessions",
+    Sale: "POS sales",
+    SaleLine: "POS sale lines",
+    SalePayment: "POS sale payments",
+    HeldSale: "held POS carts",
+    Receipt: "POS receipts",
+    SaleReturn: "POS returns",
+    SaleReturnLine: "POS return lines",
+    # Phase 5 — accounting.
+    Account: "chart of accounts",
+    Journal: "journals",
+    JournalEntry: "journal entries",
+    JournalEntryLine: "journal entry lines",
+    FiscalPeriod: "fiscal periods",
+    ProductCostLayer: "product cost layers",
 }
 
 # Role cannot inherit TenantScoped: system roles deliberately have tenant_id=NULL.

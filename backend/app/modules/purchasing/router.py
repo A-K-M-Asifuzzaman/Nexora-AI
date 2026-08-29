@@ -1,7 +1,7 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, status
+from fastapi import APIRouter, Depends, Header, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import RequirePermission, get_db
@@ -164,6 +164,7 @@ async def record_payment(
     payload: SupplierPaymentCreate,
     context: PaymentContext,
     session: DbSession,
+    response: Response,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> SupplierPaymentResponse:
     # API.md §8 lists POST /purchases/payments as requiring the header.
@@ -171,7 +172,11 @@ async def record_payment(
         raise DomainValidationError(
             "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required for this operation."
         )
-    payment = await PurchasingService(session, context).record_payment(payload, idempotency_key)
+    payment, replayed = await PurchasingService(session, context).record_payment(
+        payload, idempotency_key
+    )
+    if replayed:
+        response.headers["Idempotency-Replayed"] = "true"
     return SupplierPaymentResponse.model_validate(
         {**payment.__dict__, "direction": payment.direction.value}
     )

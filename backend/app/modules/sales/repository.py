@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.modules.sales.models import (
     CreditNote,
@@ -62,11 +63,11 @@ class SalesRepository:
             )
         )
 
-    async def invoice_line(self, line_id: UUID) -> InvoiceLine | None:
-        return cast(
-            InvoiceLine | None,
-            await self.session.scalar(select(InvoiceLine).where(InvoiceLine.id == line_id)),
-        )
+    async def invoice_line(self, line_id: UUID, *, for_update: bool = False) -> InvoiceLine | None:
+        statement = select(InvoiceLine).where(InvoiceLine.id == line_id)
+        if for_update:
+            statement = statement.with_for_update()
+        return cast(InvoiceLine | None, await self.session.scalar(statement))
 
     async def payment(self, payment_id: UUID) -> Payment | None:
         return cast(
@@ -89,9 +90,17 @@ class SalesRepository:
         )
 
     async def list_orders(
-        self, *, page: int, page_size: int, status: str | None, customer_id: UUID | None
+        self,
+        *,
+        page: int,
+        page_size: int,
+        status: str | None,
+        customer_id: UUID | None,
+        branch_ids: frozenset[UUID] | None,
     ) -> tuple[list[SalesOrder], int]:
-        filters = []
+        filters: list[ColumnElement[bool]] = []
+        if branch_ids is not None:
+            filters.append(SalesOrder.branch_id.in_(branch_ids))
         if status:
             filters.append(SalesOrder.status == status)
         if customer_id:
@@ -109,9 +118,17 @@ class SalesRepository:
         return list(rows), total
 
     async def list_invoices(
-        self, *, page: int, page_size: int, status: str | None, customer_id: UUID | None
+        self,
+        *,
+        page: int,
+        page_size: int,
+        status: str | None,
+        customer_id: UUID | None,
+        branch_ids: frozenset[UUID] | None,
     ) -> tuple[list[Invoice], int]:
-        filters = []
+        filters: list[ColumnElement[bool]] = []
+        if branch_ids is not None:
+            filters.append(Invoice.branch_id.in_(branch_ids))
         if status:
             filters.append(Invoice.status == status)
         if customer_id:
@@ -128,7 +145,9 @@ class SalesRepository:
         )
         return list(rows), total
 
-    async def receivables(self) -> list[tuple[UUID, str, Decimal, Decimal]]:
+    async def receivables(
+        self, branch_ids: frozenset[UUID] | None
+    ) -> list[tuple[UUID, str, Decimal, Decimal]]:
         """AR per customer, computed in the database.
 
         Only ISSUED-and-later invoices are receivable: a DRAFT invoice is not a
@@ -136,16 +155,29 @@ class SalesRepository:
         """
         rows = await self.session.execute(
             text("""
+                WITH credited AS (
+                    SELECT invoice_id, COALESCE(SUM(total_amount), 0) AS amount
+                      FROM credit_notes
+                     WHERE status = 'ISSUED'
+                     GROUP BY invoice_id
+                )
                 SELECT c.id, c.name,
-                       COALESCE(SUM(i.total_amount), 0) AS invoiced,
+                       COALESCE(SUM(i.total_amount - COALESCE(cr.amount, 0)), 0) AS invoiced,
                        COALESCE(SUM(i.paid_amount), 0)  AS paid
                   FROM customers c
                   JOIN invoices i ON i.customer_id = c.id
+                  LEFT JOIN credited cr ON cr.invoice_id = i.id
                  WHERE i.status IN ('ISSUED', 'PARTIALLY_PAID', 'PAID')
+                   AND (:unrestricted OR i.branch_id = ANY(CAST(:branch_ids AS uuid[])))
                  GROUP BY c.id, c.name
-                HAVING COALESCE(SUM(i.total_amount), 0) - COALESCE(SUM(i.paid_amount), 0) <> 0
+                HAVING COALESCE(SUM(i.total_amount - COALESCE(cr.amount, 0)), 0)
+                       - COALESCE(SUM(i.paid_amount), 0) <> 0
                  ORDER BY c.name
-            """)
+            """),
+            {
+                "unrestricted": branch_ids is None,
+                "branch_ids": list(branch_ids or ()),
+            },
         )
         return [(row[0], row[1], row[2], row[3]) for row in rows]
 
@@ -165,9 +197,17 @@ class SalesRepository:
         )
 
     async def list_quotations(
-        self, *, page: int, page_size: int, status: str | None, customer_id: UUID | None
+        self,
+        *,
+        page: int,
+        page_size: int,
+        status: str | None,
+        customer_id: UUID | None,
+        branch_ids: frozenset[UUID] | None,
     ) -> tuple[list[Quotation], int]:
-        filters = []
+        filters: list[ColumnElement[bool]] = []
+        if branch_ids is not None:
+            filters.append(Quotation.branch_id.in_(branch_ids))
         if status:
             filters.append(Quotation.status == status)
         if customer_id:

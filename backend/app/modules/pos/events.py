@@ -1,0 +1,7 @@
+TERMINAL_CREATED = "pos.terminal_created"
+SESSION_OPENED = "pos.session_opened"
+SESSION_CLOSED = "pos.session_closed"
+SALE_COMPLETED = "pos.sale_completed"
+SALE_HELD = "pos.sale_held"
+SALE_RESUMED = "pos.sale_resumed"
+SALE_REFUNDED = "pos.sale_refunded"

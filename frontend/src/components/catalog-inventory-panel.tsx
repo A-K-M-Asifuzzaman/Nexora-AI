@@ -3,6 +3,8 @@
 import { ArrowDownToLine, ArrowUpFromLine, Boxes, PackagePlus, Plus } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
+import { PosPanel } from "@/components/pos-panel";
+
 type Product = { id: string; sku: string; name: string; cost_price: string; selling_price: string; is_active: boolean };
 type Unit = { id: string; code: string; name: string; precision: number };
 type Warehouse = { id: string; code: string; name: string };
@@ -98,5 +100,6 @@ export function CatalogInventoryPanel() {
       <form className="catalog-form movement-form" onSubmit={postMovement}><select name="operation" aria-label="Movement type" defaultValue="receipts"><option value="receipts">Receive stock</option><option value="issues">Issue stock</option></select><select name="warehouse_id" aria-label="Warehouse" required defaultValue=""><option value="" disabled>Select warehouse</option>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select><select name="product_id" aria-label="Product" required defaultValue=""><option value="" disabled>Select product</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select><input name="quantity" aria-label="Quantity" inputMode="decimal" placeholder="Quantity" required /><input name="unit_cost" aria-label="Unit cost for receipts" inputMode="decimal" placeholder="Unit cost (receipts)" /><button disabled={busy || products.length === 0 || warehouses.length === 0}><Boxes />Post movement</button></form>
       <div className="movement-list"><h3>Recent movements</h3>{movements.map((movement) => <article key={movement.id}>{movement.movement_type === "RECEIPT" ? <ArrowDownToLine /> : <ArrowUpFromLine />}<div><strong>{productName(movement.product_id)}</strong><small>{warehouseName(movement.warehouse_id)} · {new Date(movement.occurred_at).toLocaleString()}</small></div><span>{movement.quantity}</span></article>)}</div>
     </section>
+    <PosPanel />
   </>;
 }

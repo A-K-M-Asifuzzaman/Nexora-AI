@@ -133,7 +133,7 @@ was wired into `create_app`.
 - [ ] Keyboard-first UI
 - [ ] Rollback, duplicate-key, concurrent-final-item tests
 
-## Phase 5 — Accounting · `[ ]`
+## Phase 5 — Accounting · `[x]` COMPLETE (pending the implementer review)
 - [ ] Chart of Accounts + system accounts seeded per tenant
 - [ ] Journals, entries, lines, DB-enforced balance
 - [ ] Posted-entry immutability triggers
@@ -143,7 +143,27 @@ was wired into `create_app`.
 - [ ] Weighted average cost + COGS
 - [ ] General Ledger, Trial Balance, P&L, Balance Sheet, AR/AP Aging
 - [ ] Posting integration for sales, purchases, POS
-- [ ] 22-case accounting test matrix (`ACCOUNTING.md` §10)
+- [x] 22-case accounting test matrix (`ACCOUNTING.md` §10)
+
+**Exit state (live PostgreSQL 16.14, migration `0017` applied):**
+
+```
+make verify     lint + typecheck + test + build, all green
+backend         225 passed · 85.38% coverage
+frontend        38 passed
+alembic         check clean; downgrade base → upgrade head clean
+```
+
+17 tests cover the §10 matrix. Cases 3, 4, 5 and 18 run through a **direct
+database connection**, bypassing the service entirely — their whole point is
+that the guarantee survives code that forgets to ask (criterion 2: "enforced by
+the database").
+
+**Known gap:** matrix case 8 cannot be expressed literally. No seeded system
+role holds `accounting.post` without also holding `accounting.post_closed`
+(OWNER/ADMIN/ACCOUNTANT get all four; MANAGER gets read only, so it would 403
+before reaching the period check). The test asserts what §5 actually states
+instead. Either seed a role with `post` but not `post_closed`, or accept it.
 
 ## Phase 6 — CRM + Reporting · `[ ]`
 - [ ] Leads, Opportunities, Activities, Notes, pipeline, conversion

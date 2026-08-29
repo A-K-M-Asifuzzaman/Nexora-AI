@@ -1,0 +1,5 @@
+ACCOUNT_CREATED = "account.created"
+PERIOD_CREATED = "accounting.period_created"
+PERIOD_STATUS_CHANGED = "accounting.period_status_changed"
+ENTRY_POSTED = "accounting.entry_posted"
+ENTRY_REVERSED = "accounting.entry_reversed"

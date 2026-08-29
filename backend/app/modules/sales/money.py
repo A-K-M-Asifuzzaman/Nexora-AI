@@ -25,6 +25,10 @@ def line_totals(
     intermediate the customer never sees.
     """
     gross = quantity * unit_price
-    net = round_money(gross * (Decimal("1") - discount_rate))
-    tax = round_money(net * tax_rate)
+    unrounded_net = gross * (Decimal("1") - discount_rate)
+    net = round_money(unrounded_net)
+    # ACCOUNTING.md §6's worked example computes tax from the unrounded line
+    # net, then rounds that line's tax independently. Taxing the already-rounded
+    # net diverges for small/high-quantity lines and accumulates invoice drift.
+    tax = round_money(unrounded_net * tax_rate)
     return net, tax, net + tax

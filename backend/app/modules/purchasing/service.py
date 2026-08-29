@@ -15,10 +15,16 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.context import TenantContext
-from app.core.errors import ConflictError, DomainValidationError, NotFoundError
+from app.core.errors import (
+    ConflictError,
+    DomainValidationError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 from app.core.ids import uuid7
 from app.db.session import service_transaction
 from app.modules.audit.service import AuditService
+from app.modules.branches.models import Warehouse
 from app.modules.catalog.models import Product
 from app.modules.idempotency.service import IdempotencyService
 from app.modules.inventory.models import MovementType
@@ -73,6 +79,20 @@ class PurchasingService:
     def _period(self) -> str:
         return str(datetime.now(UTC).year)
 
+    def _require_branch(self, branch_id: UUID) -> None:
+        if self.context.branch_ids is not None and branch_id not in self.context.branch_ids:
+            raise PermissionDeniedError("BRANCH_ACCESS_DENIED", "Branch access denied.")
+
+    async def _require_warehouse(self, branch_id: UUID, warehouse_id: UUID) -> None:
+        self._require_branch(branch_id)
+        warehouse = await self.session.get(Warehouse, warehouse_id)
+        if warehouse is None:
+            raise NotFoundError()
+        if warehouse.branch_id != branch_id:
+            raise DomainValidationError(
+                "WAREHOUSE_BRANCH_MISMATCH", "Warehouse does not belong to the document branch."
+            )
+
     async def _product(self, product_id: UUID) -> Product:
         product = await self.session.get(Product, product_id)
         if product is None:
@@ -84,6 +104,7 @@ class PurchasingService:
     async def create_order(self, payload: PurchaseOrderCreate) -> PurchaseOrder:
         async with service_transaction(self.session):
             await self._set_tenant()
+            await self._require_warehouse(payload.branch_id, payload.warehouse_id)
             if len({line.product_id for line in payload.lines}) != len(payload.lines):
                 raise DomainValidationError(
                     "DUPLICATE_LINE", "A product may appear only once per order."
@@ -139,6 +160,7 @@ class PurchasingService:
             order = await self.repository.order(order_id, for_update=True)
             if order is None:
                 raise NotFoundError()
+            self._require_branch(order.branch_id)
             self._require_status(order.status, (PurchaseOrderStatus.DRAFT,), "Confirmation")
             order.status = PurchaseOrderStatus.CONFIRMED
             order.confirmed_at = datetime.now(UTC)
@@ -153,6 +175,7 @@ class PurchasingService:
             order = await self.repository.order(order_id, for_update=True)
             if order is None:
                 raise NotFoundError()
+            self._require_branch(order.branch_id)
             self._require_status(
                 order.status,
                 (
@@ -183,6 +206,7 @@ class PurchasingService:
             order = await self.repository.order(order_id)
             if order is None:
                 raise NotFoundError()
+            self._require_branch(order.branch_id)
             return order, await self.repository.order_lines(order.id)
 
     async def list_orders(
@@ -191,7 +215,11 @@ class PurchasingService:
         async with service_transaction(self.session):
             await self._set_tenant()
             return await self.repository.list_orders(
-                page=page, page_size=page_size, status=status, supplier_id=supplier_id
+                page=page,
+                page_size=page_size,
+                status=status,
+                supplier_id=supplier_id,
+                branch_ids=self.context.branch_ids,
             )
 
     # -------------------------------------------------------- goods receipts
@@ -202,6 +230,7 @@ class PurchasingService:
             order = await self.repository.order(order_id, for_update=True)
             if order is None:
                 raise NotFoundError()
+            self._require_branch(order.branch_id)
             self._require_status(
                 order.status,
                 (PurchaseOrderStatus.CONFIRMED, PurchaseOrderStatus.PARTIALLY_RECEIVED),
@@ -295,6 +324,7 @@ class PurchasingService:
             order = await self.repository.order(payload.purchase_order_id, for_update=True)
             if order is None:
                 raise NotFoundError()
+            self._require_branch(order.branch_id)
             self._require_status(
                 order.status,
                 (
@@ -365,6 +395,7 @@ class PurchasingService:
             bill = await self.repository.bill(bill_id, for_update=True)
             if bill is None:
                 raise NotFoundError()
+            self._require_branch(bill.branch_id)
             self._require_status(bill.status, (SupplierBillStatus.DRAFT,), "Issuing")
             bill.status = SupplierBillStatus.ISSUED
             bill.issued_at = datetime.now(UTC)
@@ -386,6 +417,7 @@ class PurchasingService:
             bill = await self.repository.bill(bill_id)
             if bill is None:
                 raise NotFoundError()
+            self._require_branch(bill.branch_id)
             return bill, await self.repository.bill_lines(bill.id)
 
     async def list_bills(
@@ -394,16 +426,21 @@ class PurchasingService:
         async with service_transaction(self.session):
             await self._set_tenant()
             return await self.repository.list_bills(
-                page=page, page_size=page_size, status=status, supplier_id=supplier_id
+                page=page,
+                page_size=page_size,
+                status=status,
+                supplier_id=supplier_id,
+                branch_ids=self.context.branch_ids,
             )
 
     # -------------------------------------------------------------- payments
 
     async def record_payment(
         self, payload: SupplierPaymentCreate, idempotency_key: str | None
-    ) -> Payment:
+    ) -> tuple[Payment, bool]:
         async with service_transaction(self.session):
             await self._set_tenant()
+            self._require_branch(payload.branch_id)
             idempotency = IdempotencyService(self.session, self.context.tenant_id)
             if idempotency_key:
                 won, stored, _ = await idempotency.claim(
@@ -414,7 +451,7 @@ class PurchasingService:
                 if not won and stored is not None:
                     existing = await self.session.get(Payment, UUID(str(stored["id"])))
                     if existing is not None:
-                        return existing
+                        return existing, True
             allocated = sum((item.amount for item in payload.allocations), ZERO)
             if allocated > payload.amount:
                 raise DomainValidationError(
@@ -443,6 +480,12 @@ class PurchasingService:
                 bill = await self.repository.bill(item.supplier_bill_id, for_update=True)
                 if bill is None:
                     raise NotFoundError()
+                self._require_branch(bill.branch_id)
+                if bill.supplier_id != payload.supplier_id or bill.branch_id != payload.branch_id:
+                    raise DomainValidationError(
+                        "ALLOCATION_TARGET_MISMATCH",
+                        "Payment allocations must match the payment supplier and branch.",
+                    )
                 self._require_status(
                     bill.status,
                     (SupplierBillStatus.ISSUED, SupplierBillStatus.PARTIALLY_PAID),
@@ -487,13 +530,13 @@ class PurchasingService:
                     response_status=201,
                     response_body={"id": str(payment.id)},
                 )
-            return payment
+            return payment, False
 
     # ------------------------------------------------------------- reporting
 
     async def payables(self) -> tuple[list[tuple[UUID, str, Decimal, Decimal]], Decimal]:
         async with service_transaction(self.session):
             await self._set_tenant()
-            rows = await self.repository.payables()
+            rows = await self.repository.payables(self.context.branch_ids)
             outstanding = sum((row[2] - row[3] for row in rows), ZERO)
             return rows, outstanding

@@ -25,6 +25,10 @@ class NumberAllocator:
         "goods_receipt": "GRN",
         "supplier_bill": "BILL",
         "purchase_payment": "PMT",
+        "pos_session": "SHIFT",
+        "pos_sale": "SALE",
+        "pos_return": "RET",
+        "journal": "JE",
     }
 
     def __init__(self, session: AsyncSession, tenant_id: UUID) -> None:

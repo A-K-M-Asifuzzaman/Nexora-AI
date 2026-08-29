@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.modules.purchasing.models import (
     PurchaseOrder,
@@ -57,9 +58,17 @@ class PurchasingRepository:
         )
 
     async def list_orders(
-        self, *, page: int, page_size: int, status: str | None, supplier_id: UUID | None
+        self,
+        *,
+        page: int,
+        page_size: int,
+        status: str | None,
+        supplier_id: UUID | None,
+        branch_ids: frozenset[UUID] | None,
     ) -> tuple[list[PurchaseOrder], int]:
-        filters = []
+        filters: list[ColumnElement[bool]] = []
+        if branch_ids is not None:
+            filters.append(PurchaseOrder.branch_id.in_(branch_ids))
         if status:
             filters.append(PurchaseOrder.status == status)
         if supplier_id:
@@ -79,9 +88,17 @@ class PurchasingRepository:
         return list(rows), total
 
     async def list_bills(
-        self, *, page: int, page_size: int, status: str | None, supplier_id: UUID | None
+        self,
+        *,
+        page: int,
+        page_size: int,
+        status: str | None,
+        supplier_id: UUID | None,
+        branch_ids: frozenset[UUID] | None,
     ) -> tuple[list[SupplierBill], int]:
-        filters = []
+        filters: list[ColumnElement[bool]] = []
+        if branch_ids is not None:
+            filters.append(SupplierBill.branch_id.in_(branch_ids))
         if status:
             filters.append(SupplierBill.status == status)
         if supplier_id:
@@ -100,7 +117,9 @@ class PurchasingRepository:
         )
         return list(rows), total
 
-    async def payables(self) -> list[tuple[UUID, str, Decimal, Decimal]]:
+    async def payables(
+        self, branch_ids: frozenset[UUID] | None
+    ) -> list[tuple[UUID, str, Decimal, Decimal]]:
         """AP per supplier. A DRAFT bill is not yet a liability, so it is excluded."""
         rows = await self.session.execute(
             text("""
@@ -110,9 +129,14 @@ class PurchasingRepository:
                   FROM suppliers s
                   JOIN supplier_bills b ON b.supplier_id = s.id
                  WHERE b.status IN ('ISSUED', 'PARTIALLY_PAID', 'PAID')
+                   AND (:unrestricted OR b.branch_id = ANY(CAST(:branch_ids AS uuid[])))
                  GROUP BY s.id, s.name
                 HAVING COALESCE(SUM(b.total_amount), 0) - COALESCE(SUM(b.paid_amount), 0) <> 0
                  ORDER BY s.name
-            """)
+            """),
+            {
+                "unrestricted": branch_ids is None,
+                "branch_ids": list(branch_ids or ()),
+            },
         )
         return [(row[0], row[1], row[2], row[3]) for row in rows]

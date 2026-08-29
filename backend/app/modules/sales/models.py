@@ -309,6 +309,10 @@ class InvoiceLine(UUIDPk, TenantScoped, Timestamped, _LineTotals, Base):
     __table_args__ = (
         CheckConstraint("quantity > 0", name="quantity_positive"),
         CheckConstraint("unit_price >= 0", name="unit_price_nonnegative"),
+        CheckConstraint(
+            "credited_quantity >= 0 AND credited_quantity <= quantity",
+            name="credited_within_invoiced",
+        ),
         Index("ix_invoice_lines_tenant_id_invoice_id", "tenant_id", "invoice_id"),
     )
 
@@ -322,6 +326,9 @@ class InvoiceLine(UUIDPk, TenantScoped, Timestamped, _LineTotals, Base):
         ForeignKey("sales_order_lines.id", ondelete="RESTRICT")
     )
     description: Mapped[str | None] = mapped_column(Text)
+    credited_quantity: Mapped[Decimal] = mapped_column(
+        Quantity, nullable=False, default=0, server_default="0"
+    )
 
 
 class Payment(UUIDPk, TenantScoped, Timestamped, Base):

@@ -16,6 +16,7 @@ class Base(DeclarativeBase):
 
 def import_all_models() -> None:
     # Imports are deliberately local so Alembic can populate Base.metadata.
+    from app.modules.accounting import models as accounting_models  # noqa: F401
     from app.modules.audit import models as audit_models  # noqa: F401
     from app.modules.auth import models as auth_models  # noqa: F401
     from app.modules.branches import models as branch_models  # noqa: F401
@@ -25,6 +26,7 @@ def import_all_models() -> None:
     from app.modules.numbering import models as numbering_models  # noqa: F401
     from app.modules.outbox import models as outbox_models  # noqa: F401
     from app.modules.parties import models as parties_models  # noqa: F401
+    from app.modules.pos import models as pos_models  # noqa: F401
     from app.modules.purchasing import models as purchasing_models  # noqa: F401
     from app.modules.rbac import models as rbac_models  # noqa: F401
     from app.modules.sales import models as sales_models  # noqa: F401

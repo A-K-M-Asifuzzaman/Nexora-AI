@@ -1,7 +1,7 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, status
+from fastapi import APIRouter, Depends, Header, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import RequirePermission, get_db
@@ -157,6 +157,7 @@ async def issue_invoice(
     resource_id: UUID,
     context: InvoiceContext,
     session: DbSession,
+    response: Response,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> InvoiceResponse:
     # API.md §8 makes the header mandatory here: issuing allocates a gapless
@@ -165,9 +166,12 @@ async def issue_invoice(
         raise DomainValidationError(
             "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required for this operation."
         )
-    return InvoiceResponse.model_validate(
-        await SalesService(session, context).issue_invoice(resource_id)
+    invoice, replayed = await SalesService(session, context).issue_invoice(
+        resource_id, idempotency_key
     )
+    if replayed:
+        response.headers["Idempotency-Replayed"] = "true"
+    return InvoiceResponse.model_validate(invoice)
 
 
 @router.post("/payments", response_model=PaymentDetail, status_code=status.HTTP_201_CREATED)
@@ -175,15 +179,18 @@ async def record_payment(
     payload: PaymentCreate,
     context: PaymentContext,
     session: DbSession,
+    response: Response,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> PaymentDetail:
     if not idempotency_key:
         raise DomainValidationError(
             "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required for this operation."
         )
-    payment, allocations = await SalesService(session, context).record_payment(
+    payment, allocations, replayed = await SalesService(session, context).record_payment(
         payload, idempotency_key
     )
+    if replayed:
+        response.headers["Idempotency-Replayed"] = "true"
     return PaymentDetail(
         **{
             **payment.__dict__,

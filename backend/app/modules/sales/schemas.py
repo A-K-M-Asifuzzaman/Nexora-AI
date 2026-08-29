@@ -2,7 +2,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from app.modules.sales.models import (
     CreditNoteStatus,
@@ -13,6 +13,22 @@ from app.modules.sales.models import (
 )
 
 MONEY_FIELDS = ("net_amount", "tax_amount", "total_amount", "paid_amount", "unit_price", "amount")
+
+
+class _StrictInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def decimals_are_strings(cls, value: object, info: object) -> object:
+        field_name = getattr(info, "field_name", "")
+        if (
+            field_name in {"quantity", "unit_price", "discount_rate", "tax_rate", "amount"}
+            and value is not None
+            and not isinstance(value, str)
+        ):
+            raise ValueError("Money, quantity, and rate values must be JSON strings.")
+        return value
 
 
 class _MoneyOut(BaseModel):
@@ -30,14 +46,12 @@ class _MoneyOut(BaseModel):
         return str(value) if isinstance(value, Decimal) else value
 
 
-class LineInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class LineInput(_StrictInput):
     product_id: UUID
-    quantity: Decimal = Field(gt=0)
-    unit_price: Decimal = Field(ge=0)
-    discount_rate: Decimal = Field(default=Decimal("0"), ge=0, le=1)
-    tax_rate: Decimal = Field(default=Decimal("0"), ge=0, le=1)
+    quantity: Decimal = Field(gt=0, max_digits=20, decimal_places=6)
+    unit_price: Decimal = Field(ge=0, max_digits=18, decimal_places=4)
+    discount_rate: Decimal = Field(default=Decimal("0"), ge=0, le=1, max_digits=9, decimal_places=6)
+    tax_rate: Decimal = Field(default=Decimal("0"), ge=0, le=1, max_digits=9, decimal_places=6)
     description: str | None = None
 
 
@@ -88,11 +102,9 @@ class SalesOrderDetail(SalesOrderResponse):
     lines: list[SalesOrderLineResponse]
 
 
-class FulfillmentLineInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class FulfillmentLineInput(_StrictInput):
     sales_order_line_id: UUID
-    quantity: Decimal = Field(gt=0)
+    quantity: Decimal = Field(gt=0, max_digits=20, decimal_places=6)
 
 
 class FulfillmentCreate(BaseModel):
@@ -144,20 +156,16 @@ class InvoiceDetail(InvoiceResponse):
     lines: list[LineResponse]
 
 
-class AllocationInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class AllocationInput(_StrictInput):
     invoice_id: UUID
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=4)
 
 
-class PaymentCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class PaymentCreate(_StrictInput):
     customer_id: UUID
     branch_id: UUID
     method: PaymentMethod
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=4)
     payment_date: date
     reference: str | None = Field(default=None, max_length=120)
     notes: str | None = None
@@ -189,11 +197,9 @@ class PaymentDetail(PaymentResponse):
     allocations: list[AllocationResponse]
 
 
-class CreditNoteLineInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class CreditNoteLineInput(_StrictInput):
     invoice_line_id: UUID
-    quantity: Decimal = Field(gt=0)
+    quantity: Decimal = Field(gt=0, max_digits=20, decimal_places=6)
 
 
 class CreditNoteCreate(BaseModel):
