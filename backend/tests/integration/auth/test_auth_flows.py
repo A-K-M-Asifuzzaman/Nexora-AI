@@ -4,9 +4,11 @@ These pin the security properties of the auth surface, not just its happy path.
 Each test names the property it defends.
 """
 
+import uuid
+
 import httpx
 
-from tests.integration.conftest import PASSWORD, register_and_login
+from tests.integration.conftest import PASSWORD, create_organization, register_and_login
 
 
 class TestEnumerationResistance:
@@ -225,3 +227,27 @@ class TestRequestValidation:
     ) -> None:
         for path in ("/api/v1/branches/", "/api/v1/members/", "/api/v1/roles/"):
             assert (await client.get(path)).status_code == 401
+
+
+async def test_login_returns_the_role_codes_on_each_membership(
+    client: httpx.AsyncClient,
+) -> None:
+    """Regression for the third pre-tenant RLS collision (migration 0014).
+
+    `membership_roles` carried only the tenant policy, which subqueries
+    `memberships.tenant_id = app.tenant_id`. Login runs before any tenant is
+    selected, so the join returned zero rows and every membership came back with
+    `roles: []` — silently, with the query, the data and the `roles` policy all
+    correct.
+    """
+    email = f"roles-{uuid.uuid4().hex[:10]}@example.com"
+    headers, _ = await register_and_login(client, email)
+    await create_organization(client, headers)
+
+    response = await client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD})
+    assert response.status_code == 200, response.text
+    memberships = response.json()["memberships"]
+    assert len(memberships) == 1, memberships
+    # Whoever created the organization is its OWNER; an empty list here means
+    # RLS is hiding rows the caller owns.
+    assert memberships[0]["roles"] == ["OWNER"], memberships[0]
