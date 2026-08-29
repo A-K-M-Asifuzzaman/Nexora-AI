@@ -41,7 +41,12 @@ export function createContentSecurityPolicy(nonce: string, isDevelopment: boolea
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",
-    "upgrade-insecure-requests",
+    // Production only. This directive rewrites every http:// request to
+    // https://, and the development server speaks plain HTTP — with it on,
+    // every fetch from the browser failed with ERR_SSL_PROTOCOL_ERROR and the
+    // whole workspace went blank. TLS terminates at the reverse proxy in
+    // production (ARCHITECTURE.md §20), which is where the upgrade belongs.
+    ...(isDevelopment ? [] : ["upgrade-insecure-requests"]),
   ];
 
   return `${directives.join("; ")};`;

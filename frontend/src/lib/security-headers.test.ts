@@ -67,6 +67,14 @@ describe("SECURITY.md §11 headers", () => {
     expect(styleSrc).not.toContain("nonce-");
   });
 
+  it("upgrades insecure requests in production only", () => {
+    // Regression: with this on in development the browser rewrote every
+    // http://localhost fetch to https:// and failed with
+    // ERR_SSL_PROTOCOL_ERROR, blanking the workspace.
+    expect(createContentSecurityPolicy("n", false)).toContain("upgrade-insecure-requests");
+    expect(createContentSecurityPolicy("n", true)).not.toContain("upgrade-insecure-requests");
+  });
+
   it("opens the HMR websocket in development only", () => {
     expect(createContentSecurityPolicy("n", true)).toContain("connect-src 'self' ws: wss:");
     expect(createContentSecurityPolicy("n", false)).toContain("connect-src 'self';");

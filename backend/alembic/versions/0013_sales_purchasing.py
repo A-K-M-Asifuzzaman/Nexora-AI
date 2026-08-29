@@ -1576,6 +1576,20 @@ def upgrade() -> None:
     connection.exec_driver_sql(
         "ALTER TABLE role_permissions ENABLE TRIGGER trg_role_permissions_system_immutable"
     )
+    # Permissions are cached in Redis keyed by membership `roles_version`
+    # (ADR-0008). Granting a permission without bumping it means every already
+    # logged-in user keeps their old permission set until something else
+    # changes their roles — so a deploy that adds a module looks broken, with
+    # every new endpoint returning 403 to people who genuinely hold the
+    # permission. Observed exactly that after re-running this migration.
+    connection.exec_driver_sql("""
+        UPDATE memberships SET roles_version = roles_version + 1
+         WHERE id IN (
+            SELECT mr.membership_id FROM membership_roles mr
+              JOIN roles r ON r.id = mr.role_id
+             WHERE r.is_system
+         )
+    """)
     # ### end Alembic commands ###
 
 
