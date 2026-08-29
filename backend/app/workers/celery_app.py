@@ -10,7 +10,7 @@ celery = Celery(
     backend=settings.celery_result_backend.get_secret_value(),
     # Without `include` the worker registers no tasks and drains nothing, while
     # appearing to start correctly.
-    include=["app.workers.tasks.outbox"],
+    include=["app.workers.tasks.outbox", "app.workers.tasks.inventory"],
 )
 celery.conf.update(
     task_always_eager=settings.celery_task_always_eager,
@@ -28,5 +28,9 @@ celery.conf.update(
     # indistinguishable from a working one until the mail does not arrive.
     beat_schedule={
         "outbox-drain": {"task": "outbox.drain", "schedule": settings.outbox_drain_seconds},
+        "inventory-release-expired": {
+            "task": "inventory.release_expired_reservations",
+            "schedule": 60.0,
+        },
     },
 )

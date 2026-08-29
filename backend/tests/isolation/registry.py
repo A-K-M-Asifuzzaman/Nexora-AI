@@ -1,8 +1,23 @@
 from app.modules.audit.models import AuditEvent
 from app.modules.branches.models import Branch, Warehouse
-from app.modules.catalog.models import Brand, Category, Product, ProductBarcode, ProductVariant, TaxCategory, UnitOfMeasure
+from app.modules.catalog.models import (
+    Brand,
+    Category,
+    Product,
+    ProductBarcode,
+    ProductVariant,
+    TaxCategory,
+    UnitOfMeasure,
+)
 from app.modules.idempotency.models import IdempotencyKey
-from app.modules.inventory.models import InventoryBalance, InventoryMovement, StockAdjustment, StockReservation, StockTransfer, StockTransferLine
+from app.modules.inventory.models import (
+    InventoryBalance,
+    InventoryMovement,
+    StockAdjustment,
+    StockReservation,
+    StockTransfer,
+    StockTransferLine,
+)
 from app.modules.rbac.models import Role
 from app.modules.tenancy.models import Invitation, Membership, Tenant
 

@@ -1,0 +1,8 @@
+MOVEMENT_POSTED = "inventory.movement_posted"
+RESERVATION_CREATED = "inventory.reservation_created"
+RESERVATION_RELEASED = "inventory.reservation_released"
+TRANSFER_CREATED = "inventory.transfer_created"
+TRANSFER_SHIPPED = "inventory.transfer_shipped"
+TRANSFER_RECEIVED = "inventory.transfer_received"
+ADJUSTMENT_POSTED = "inventory.adjustment_posted"
+RECONCILIATION_DRIFT = "inventory.reconciliation_drift"

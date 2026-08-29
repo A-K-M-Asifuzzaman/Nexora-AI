@@ -17,6 +17,13 @@ class Perm(StrEnum):
     USERS_MANAGE_ROLES = "users.manage_roles"
     ROLES_MANAGE = "roles.manage"
     AUDIT_READ = "audit.read"
+    INVENTORY_READ = "inventory.read"
+    INVENTORY_MANAGE = "inventory.manage"
+    INVENTORY_RECEIVE = "inventory.receive"
+    INVENTORY_ISSUE = "inventory.issue"
+    INVENTORY_ADJUST = "inventory.adjust"
+    INVENTORY_RESERVE = "inventory.reserve"
+    INVENTORY_TRANSFER = "inventory.transfer"
 
 
 PHASE_1_PERMISSIONS = tuple(permission.value for permission in Perm)

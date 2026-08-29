@@ -56,18 +56,33 @@ phase it depends on.
 observed end-to-end against MailHog because Docker was unavailable (P2-40).
 Run it when Docker Desktop is up; every recovery flow depends on it.
 
-## Phase 2 — Catalog + Inventory · `[~]` IN PROGRESS
+## Phase 2 — Catalog + Inventory · `[x]` COMPLETE
 Binding specification: `the handoff log` → *ARCHITECT HANDOFF — PHASE 2*.
-- [ ] Products, variants, categories, brands, UoM, tax categories
-- [ ] SKU / barcode tenant-unique constraints
-- [ ] Warehouses (semantics)
-- [ ] Inventory movement ledger (append-only)
-- [ ] Materialized balances + reconciliation job
-- [ ] Reservations, transfers, adjustments
-- [ ] Concurrency-safe consumption (`FOR UPDATE`, lock ordering)
-- [ ] Low-stock configuration
-- [ ] Catalog + inventory UI
-- [ ] Concurrency and isolation test suites
+- [x] Products, variants, categories, brands, UoM, tax categories
+- [x] SKU / barcode tenant-unique constraints
+- [x] Warehouses (semantics)
+- [x] Inventory movement ledger (append-only, trigger-enforced)
+- [x] Materialized balances + reconciliation job
+- [x] Reservations, transfers, adjustments
+- [x] Concurrency-safe consumption (`FOR UPDATE`, lock ordering)
+- [x] Low-stock configuration
+- [x] Catalog + inventory UI
+- [x] Concurrency and isolation test suites
+
+**Exit state (verified against live PostgreSQL 16.14, migration `0012` applied):**
+
+```
+make verify     lint + typecheck + test + build, all green
+backend         153 passed · 84.97% coverage
+frontend        28 passed · 9 files
+alembic check   no drift
+RLS             enabled on all 13 new tables (confirmed in pg_tables)
+```
+
+Criterion 3 (no oversell) and criterion 5 (idempotent replay) are both pinned
+by tests that assert against the **movement ledger**, not only the cached
+balance — a lost update and a correct ledger can reach the same final number.
+No P0 or P1 open.
 
 ## Phase 3 — Sales + Purchasing · `[ ]`
 - [ ] Customers, Suppliers
