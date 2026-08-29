@@ -22,6 +22,7 @@ from app.core.ids import uuid7
 from app.db.session import service_transaction
 from app.modules.audit.service import AuditService
 from app.modules.catalog.models import Product
+from app.modules.idempotency.service import IdempotencyService
 from app.modules.inventory.models import MovementType
 from app.modules.inventory.service import InventoryService
 from app.modules.numbering.service import NumberAllocator
@@ -597,6 +598,19 @@ class SalesService:
     ) -> tuple[Payment, list[PaymentAllocation]]:
         async with service_transaction(self.session):
             await self._set_tenant()
+            idempotency = IdempotencyService(self.session, self.context.tenant_id)
+            if idempotency_key:
+                # ARCHITECTURE.md §11: the key row commits with the business
+                # rows, so a recorded key without its payment is impossible.
+                won, stored, _ = await idempotency.claim(
+                    endpoint="POST /sales/payments",
+                    key=idempotency_key,
+                    payload=payload.model_dump(mode="json"),
+                )
+                if not won and stored is not None:
+                    existing = await self.repository.payment(UUID(str(stored["id"])))
+                    if existing is not None:
+                        return existing, await self.repository.allocations(existing.id)
             allocated = sum((item.amount for item in payload.allocations), ZERO)
             # ACCOUNTING.md §3.3: the sum of allocations may never exceed the
             # payment. Checked before any row is written so a rejected payment
@@ -669,6 +683,13 @@ class SalesService:
                 payment.id,
                 {"amount": str(payment.amount), "allocated": str(allocated)},
             )
+            if idempotency_key:
+                await idempotency.complete(
+                    endpoint="POST /sales/payments",
+                    key=idempotency_key,
+                    response_status=201,
+                    response_body={"id": str(payment.id)},
+                )
             return payment, allocations
 
     # ---------------------------------------------------------- credit notes

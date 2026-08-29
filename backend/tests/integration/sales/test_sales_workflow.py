@@ -482,3 +482,66 @@ async def test_rejected_quotation_cannot_be_converted(client: httpx.AsyncClient)
         json={"warehouse_id": ids["warehouse_id"], "order_date": "2026-08-29"},
     )
     assert response.status_code == 409
+
+
+async def test_replaying_one_payment_key_does_not_pay_twice(client: httpx.AsyncClient) -> None:
+    """Criterion 5 for money, not just stock (ARCHITECTURE.md §11).
+
+    Before the idempotency service existed, both payment endpoints required an
+    Idempotency-Key, stored it, and enforced nothing. Measured at the time:
+    replaying one key twice produced two payments and left the invoice showing
+    paid_amount 200.0000 against a single 100.00 payment.
+    """
+    headers, ids = await workspace(client)
+    invoice = await _issued_invoice(client, headers, ids)
+    key = str(uuid.uuid4())
+    body = {
+        "customer_id": ids["customer_id"],
+        "branch_id": ids["branch_id"],
+        "method": "CASH",
+        "amount": "100.0000",
+        "payment_date": "2026-08-29",
+        "allocations": [{"invoice_id": invoice["id"], "amount": "100.0000"}],
+    }
+
+    first = await client.post(
+        "/api/v1/sales/payments", headers={**headers, "Idempotency-Key": key}, json=body
+    )
+    second = await client.post(
+        "/api/v1/sales/payments", headers={**headers, "Idempotency-Key": key}, json=body
+    )
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    # The replay returns the original payment, not a new one.
+    assert second.json()["id"] == first.json()["id"]
+
+    after = (await client.get(f"/api/v1/sales/invoices/{invoice['id']}", headers=headers)).json()
+    assert after["paid_amount"] == "100.0000", after["paid_amount"]
+
+
+async def test_same_key_with_a_different_body_is_rejected(client: httpx.AsyncClient) -> None:
+    headers, ids = await workspace(client)
+    invoice = await _issued_invoice(client, headers, ids)
+    key = str(uuid.uuid4())
+    base = {
+        "customer_id": ids["customer_id"],
+        "branch_id": ids["branch_id"],
+        "method": "CASH",
+        "payment_date": "2026-08-29",
+        "allocations": [{"invoice_id": invoice["id"], "amount": "50.0000"}],
+    }
+    first = await client.post(
+        "/api/v1/sales/payments",
+        headers={**headers, "Idempotency-Key": key},
+        json={**base, "amount": "50.0000"},
+    )
+    assert first.status_code == 201, first.text
+
+    # One key must never mean two different operations (§11 step 4).
+    second = await client.post(
+        "/api/v1/sales/payments",
+        headers={**headers, "Idempotency-Key": key},
+        json={**base, "amount": "75.0000"},
+    )
+    assert second.status_code == 422
+    assert second.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSE"
