@@ -1,0 +1,1 @@
+"""Tenant-scoped product catalog."""
