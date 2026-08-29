@@ -7,15 +7,17 @@ const replace = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace }) }));
 
 describe("InvitationAcceptForm", () => {
-  beforeEach(() => { replace.mockReset(); });
+  beforeEach(() => { replace.mockReset(); window.location.hash = ""; });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
   it("redeems the link token without allowing a role choice", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ created_account: "true" }) });
     vi.stubGlobal("fetch", fetchMock);
-    render(<InvitationAcceptForm token="invitation-token-value" />);
+    window.location.hash = "token=invitation-token-value";
+    render(<InvitationAcceptForm />);
 
     expect(screen.queryByLabelText(/role/i)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByLabelText("Invitation code")).not.toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Invited Person" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "a-secure-password" } });
     fireEvent.click(screen.getByRole("button", { name: "Accept invitation" }));
@@ -28,8 +30,18 @@ describe("InvitationAcceptForm", () => {
   });
 
   it("accepts a pasted code when the link has no token", () => {
-    render(<InvitationAcceptForm token="" />);
+    render(<InvitationAcceptForm />);
     expect(screen.getByLabelText("Invitation code")).toBeRequired();
     expect(screen.getByRole("button", { name: "Accept invitation" })).toBeEnabled();
+  });
+
+  it("removes a fragment credential from browser history after capture", async () => {
+    const replaceState = vi.spyOn(window.history, "replaceState");
+    window.location.hash = "token=invitation-token-value";
+
+    render(<InvitationAcceptForm />);
+
+    await waitFor(() => expect(replaceState).toHaveBeenCalledWith(null, "", "/"));
+    expect(screen.queryByLabelText("Invitation code")).not.toBeInTheDocument();
   });
 });

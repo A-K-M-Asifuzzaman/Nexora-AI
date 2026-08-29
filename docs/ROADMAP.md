@@ -34,25 +34,30 @@ phase it depends on.
 - [x] AI safety architecture
 - [x] Phase 1 implementation handoff
 
-## Phase 1 — Foundation (Auth + Tenancy + RBAC + Audit) · `[ ]`
-- [ ] FastAPI app factory, config, error handling, correlation IDs
-- [ ] `/health`, `/ready`, `/metrics`
-- [ ] Registration, login, Argon2id hashing
-- [ ] Access + refresh tokens, rotation, reuse detection
-- [ ] Logout / logout-all / session revocation
-- [ ] Email verification + password reset structure
-- [ ] Tenant, Branch, Warehouse, Membership
-- [ ] Tenant context dependency + global query filter + RLS
-- [ ] Roles, Permissions, role mapping, authorization service
-- [ ] Invitations
-- [ ] AuditEvent + audit service + SecurityEvent
-- [ ] Idempotency + outbox tables
-- [ ] Next.js shell, auth pages, org creation, org switcher, branch & member UI
-- [ ] Docker Compose, `.env.example`
-- [ ] Test suites: unit, integration, isolation, authz, structural
-- [ ] CI pipeline green
+## Phase 1 — Foundation (Auth + Tenancy + RBAC + Audit) · `[x]` COMPLETE
+- [x] FastAPI app factory, config, error handling, correlation IDs
+- [x] `/health`, `/ready`, `/metrics`
+- [x] Registration, login, Argon2id hashing
+- [x] Access + refresh tokens, rotation, reuse detection
+- [x] Logout / logout-all / session revocation
+- [x] Email verification + password reset structure
+- [x] Tenant, Branch, Warehouse, Membership
+- [x] Tenant context dependency + global query filter + RLS
+- [x] Roles, Permissions, role mapping, authorization service
+- [x] Invitations
+- [x] AuditEvent + audit service + SecurityEvent
+- [x] Idempotency + outbox tables (drain scheduled by beat — P1-39)
+- [x] Next.js shell, auth pages, org creation, org switcher, branch & member UI
+- [x] Docker Compose, `.env.example`
+- [x] Test suites: unit, integration, isolation, authz, structural
+- [x] CI pipeline green
 
-## Phase 2 — Catalog + Inventory · `[ ]`
+**Exit state:** no P0 or P1 open. One P2 owed — the outbox drain has not been
+observed end-to-end against MailHog because Docker was unavailable (P2-40).
+Run it when Docker Desktop is up; every recovery flow depends on it.
+
+## Phase 2 — Catalog + Inventory · `[~]` IN PROGRESS
+Binding specification: `the handoff log` → *ARCHITECT HANDOFF — PHASE 2*.
 - [ ] Products, variants, categories, brands, UoM, tax categories
 - [ ] SKU / barcode tenant-unique constraints
 - [ ] Warehouses (semantics)

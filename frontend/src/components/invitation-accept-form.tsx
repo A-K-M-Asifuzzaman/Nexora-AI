@@ -1,14 +1,26 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 type ErrorEnvelope = { error?: { message?: string } };
 
-export function InvitationAcceptForm({ token }: { token: string }) {
+export function InvitationAcceptForm() {
   const router = useRouter();
+  const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    const fragmentToken = fragment.get("token") ?? "";
+    if (!fragmentToken) return;
+
+    // Fragments never reach the server or proxy logs. Remove the credential
+    // from browser history as soon as this client component has captured it.
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    queueMicrotask(() => setToken(fragmentToken));
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setPending(true); setError(null);

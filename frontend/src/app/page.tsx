@@ -39,7 +39,7 @@ export default function HomePage() {
               <header><div><small>MONDAY, AUGUST 29</small><h2>Good morning, Asif.</h2></div><div className="avatar">AZ</div></header>
               <div className="metric-row"><Metric label="Revenue" value="$84,290" trend="+12.4%" /><Metric label="Net profit" value="$21,840" trend="+8.1%" /><Metric label="Cash position" value="$128,460" trend="Healthy" /></div>
               <div className="preview-grid">
-                <div className="chart-card"><div className="card-head"><span>Revenue movement</span><small>Last 6 months</small></div><div className="chart"><i style={{height:"28%"}}/><i style={{height:"43%"}}/><i style={{height:"37%"}}/><i style={{height:"62%"}}/><i style={{height:"54%"}}/><i style={{height:"82%"}}/><i className="current" style={{height:"72%"}}/></div></div>
+                <div className="chart-card"><div className="card-head"><span>Revenue movement</span><small>Last 6 months</small></div><div className="chart"><i className="bar-28"/><i className="bar-43"/><i className="bar-37"/><i className="bar-62"/><i className="bar-54"/><i className="bar-82"/><i className="bar-72 current"/></div></div>
                 <div className="insight-card"><span className="insight-icon">✦</span><small>NEXORA INSIGHT</small><h3>Your margin is improving</h3><p>Gross margin rose 3.2% this month, led by your wholesale channel.</p><button type="button">Explore insight <ArrowRight size={14}/></button></div>
               </div>
             </div>

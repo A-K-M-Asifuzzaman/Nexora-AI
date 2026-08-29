@@ -8,7 +8,7 @@
  * This is a declaration test, which is the weaker kind (cf. P2-23). Enforcement
  * was verified separately against a running production server:
  *
- *   $ curl -si http://127.0.0.1:3987/invite/accept?token=abc
+ *   $ curl -si http://127.0.0.1:3987/invite/accept
  *   X-Content-Type-Options: nosniff
  *   X-Frame-Options: DENY
  *   Referrer-Policy: strict-origin-when-cross-origin
@@ -20,6 +20,7 @@
 import { describe, expect, it } from "vitest";
 
 import nextConfig, { securityHeaders } from "../../next.config";
+import { createContentSecurityPolicy } from "./content-security-policy";
 
 describe("SECURITY.md §11 headers", () => {
   it("declares every required header", () => {
@@ -40,13 +41,18 @@ describe("SECURITY.md §11 headers", () => {
     expect(rules[0].headers).toEqual(securityHeaders);
   });
 
-  it("does not yet claim a CSP", () => {
-    // §11 also requires a CSP without `unsafe-eval`. It is not implemented:
-    // doing it properly needs a per-request nonce through middleware, and a CSP
-    // shipped without browser verification is likelier to break the app than to
-    // protect it. Tracked as P1-37. This assertion is here so that when a CSP
-    // does land, this test fails and forces the finding to be closed rather
-    // than silently left open.
-    expect(securityHeaders.some((h) => h.key === "Content-Security-Policy")).toBe(false);
+  it("builds a nonce-based production CSP without unsafe script execution", () => {
+    const policy = createContentSecurityPolicy("test-nonce", false);
+
+    expect(policy).toContain("script-src 'self' 'nonce-test-nonce' 'strict-dynamic'");
+    expect(policy).toContain("style-src 'self' 'nonce-test-nonce'");
+    expect(policy).toContain("object-src 'none'");
+    expect(policy).toContain("frame-ancestors 'none'");
+    expect(policy).not.toContain("'unsafe-inline'");
+    expect(policy).not.toContain("'unsafe-eval'");
+  });
+
+  it("permits eval only for the React development toolchain", () => {
+    expect(createContentSecurityPolicy("test-nonce", true)).toContain("'unsafe-eval'");
   });
 });
