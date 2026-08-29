@@ -81,6 +81,25 @@ services:
         condition: service_healthy
     command: ["celery", "-A", "app.workers.celery_app:celery", "worker", "--loglevel=INFO"]
 
+  # Celery beat is a separate scheduler process. `beat_schedule` in
+  # workers/tasks/outbox.py only declares the 10s outbox drain — a worker on its
+  # own never fires it, so without this service every verification, reset and
+  # invitation mail is enqueued and never sent.
+  #
+  # It is its own service rather than `worker -B` because beat must be a
+  # singleton: scaling `worker` to N replicas with -B gives N schedulers. The
+  # drain itself is safe under that (FOR UPDATE SKIP LOCKED), but the schedule
+  # is meant to tick once.
+  beat:
+    build: {context: ./backend}
+    environment: *backend-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    command: ["celery", "-A", "app.workers.celery_app:celery", "beat", "--loglevel=INFO"]
+
   frontend:
     build: {context: ./frontend}
     environment:

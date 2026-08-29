@@ -21,4 +21,12 @@ celery.conf.update(
     enable_utc=True,
     worker_prefetch_multiplier=1,
     task_acks_late=True,
+    # Declared on the app, not as an import side effect in the task module, so
+    # the schedule exists for every process that builds this app — beat included.
+    # Beat does not necessarily import `include` modules before reading its
+    # schedule, and a beat that starts cleanly and schedules nothing is
+    # indistinguishable from a working one until the mail does not arrive.
+    beat_schedule={
+        "outbox-drain": {"task": "outbox.drain", "schedule": settings.outbox_drain_seconds},
+    },
 )

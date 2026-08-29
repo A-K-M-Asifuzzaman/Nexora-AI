@@ -40,7 +40,7 @@ def drain_outbox() -> int:
     return sent
 
 
-celery.conf.beat_schedule = {
-    **getattr(celery.conf, "beat_schedule", {}),
-    "outbox-drain": {"task": "outbox.drain", "schedule": 10.0},
-}
+# The schedule itself lives in `celery_app.py`, not here. Setting it as a side
+# effect of importing this module means it exists only if something imports the
+# module first — true for the worker (via `include`), but not guaranteed for
+# beat, which would then start cleanly and schedule nothing.

@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     email_from_name: str = "Nexora AI"
     outbox_batch_size: int = Field(default=50, ge=1, le=500)
     outbox_max_attempts: int = Field(default=8, ge=1, le=50)
+    # How often beat fires the drain. A password reset should not sit in the
+    # queue for a noticeable time, so this is seconds, not minutes.
+    outbox_drain_seconds: float = Field(default=10.0, gt=0, le=3600)
 
     @field_validator("cors_origins", mode="before")
     @classmethod
