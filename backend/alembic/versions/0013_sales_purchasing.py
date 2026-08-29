@@ -64,6 +64,13 @@ PHASE_3_PERMISSIONS = (
 # everyone including OWNER, which reads as an authorization bug rather than
 # missing seed data.
 ROLE_PERMISSIONS = {
+    # OWNER and ADMIN are not implicit. Omitting them here made every Phase 3
+    # route return 403 for the tenant owner — caught by the first real call
+    # against the database, not by any of the 153 passing tests. `API.md` §6.1
+    # says OWNER holds all permissions; that is expressed by granting them, not
+    # inferred at check time.
+    "OWNER": PHASE_3_PERMISSIONS,
+    "ADMIN": PHASE_3_PERMISSIONS,
     "MANAGER": PHASE_3_PERMISSIONS,
     "ACCOUNTANT": (
         "customers.read",

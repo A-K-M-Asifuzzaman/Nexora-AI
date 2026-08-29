@@ -24,6 +24,20 @@ class Perm(StrEnum):
     INVENTORY_ADJUST = "inventory.adjust"
     INVENTORY_RESERVE = "inventory.reserve"
     INVENTORY_TRANSFER = "inventory.transfer"
+    CUSTOMERS_READ = "customers.read"
+    CUSTOMERS_MANAGE = "customers.manage"
+    SUPPLIERS_READ = "suppliers.read"
+    SUPPLIERS_MANAGE = "suppliers.manage"
+    SALES_READ = "sales.read"
+    SALES_MANAGE = "sales.manage"
+    SALES_FULFILL = "sales.fulfill"
+    SALES_INVOICE = "sales.invoice"
+    SALES_PAYMENT = "sales.payment"
+    PURCHASES_READ = "purchases.read"
+    PURCHASES_MANAGE = "purchases.manage"
+    PURCHASES_RECEIVE = "purchases.receive"
+    PURCHASES_BILL = "purchases.bill"
+    PURCHASES_PAYMENT = "purchases.payment"
 
 
 PHASE_1_PERMISSIONS = tuple(permission.value for permission in Perm)
