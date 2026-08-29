@@ -96,6 +96,14 @@ class TestCrossTenantIsolation:
 
 
 class TestRoleManagement:
+    async def test_permission_catalog_is_available(
+        self, client: httpx.AsyncClient, email: str
+    ) -> None:
+        headers = await tenant_headers(client, email)
+        response = await client.get("/api/v1/roles/permissions", headers=headers)
+        assert response.status_code == 200
+        assert "branches.read" in {row["code"] for row in response.json()}
+
     async def test_system_roles_cannot_be_modified(
         self, client: httpx.AsyncClient, email: str
     ) -> None:
@@ -143,3 +151,45 @@ class TestRoleManagement:
             json={"code": "BOGUS", "name": "Bogus", "permission_codes": ["not.a.permission"]},
         )
         assert response.status_code == 422
+
+    async def test_role_update_revalidates_permissions_and_bumps_assignees(
+        self, client: httpx.AsyncClient, email: str
+    ) -> None:
+        headers = await tenant_headers(client, email)
+        created = await client.post(
+            "/api/v1/roles/",
+            headers=headers,
+            json={"code": "REVIEWER", "name": "Reviewer", "permission_codes": []},
+        )
+        role_id = created.json()["id"]
+        updated = await client.patch(
+            f"/api/v1/roles/{role_id}",
+            headers=headers,
+            json={"permission_codes": ["branches.read"]},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["permission_codes"] == ["branches.read"]
+
+    async def test_missing_custom_role_is_not_found(
+        self, client: httpx.AsyncClient, email: str
+    ) -> None:
+        headers = await tenant_headers(client, email)
+        missing = uuid.uuid4()
+        assert (
+            await client.patch(
+                f"/api/v1/roles/{missing}", headers=headers, json={"name": "Missing"}
+            )
+        ).status_code == 404
+        assert (await client.delete(f"/api/v1/roles/{missing}", headers=headers)).status_code == 404
+
+    async def test_duplicate_role_code_is_rejected(
+        self, client: httpx.AsyncClient, email: str
+    ) -> None:
+        headers = await tenant_headers(client, email)
+        payload = {"code": "DUPLICATE", "name": "Duplicate", "permission_codes": []}
+        assert (
+            await client.post("/api/v1/roles/", headers=headers, json=payload)
+        ).status_code == 201
+        response = await client.post("/api/v1/roles/", headers=headers, json=payload)
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "DUPLICATE_RESOURCE"

@@ -95,6 +95,17 @@ jobs:
 
   frontend-tests:
     runs-on: ubuntu-latest
+    # The BFF single-flight refresh lock lives in Redis, and its tests use the
+    # real thing — a mocked lock would only prove the mock is exclusive.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 5s --health-retries 12
+    env:
+      BFF_REDIS_URL: redis://127.0.0.1:6379/3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
