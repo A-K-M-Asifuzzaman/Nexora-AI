@@ -17,6 +17,7 @@ from app.modules.rbac.router import router as roles_router
 from app.modules.reporting.router import router as reporting_router
 from app.modules.sales.router import router as sales_router
 from app.modules.tenancy.router import router as tenancy_router
+from app.modules.vat.router import router as vat_router
 
 router = APIRouter()
 router.include_router(accounting_router)
@@ -32,6 +33,7 @@ router.include_router(crm_router)
 router.include_router(pos_router)
 router.include_router(sales_router)
 router.include_router(reporting_router)
+router.include_router(vat_router)
 router.include_router(purchasing_router)
 router.include_router(members_router)
 router.include_router(roles_router)

@@ -64,6 +64,7 @@ from app.modules.sales.models import (
     SalesOrderLine,
 )
 from app.modules.tenancy.models import Invitation, Membership, Tenant
+from app.modules.vat.models import VatRate, VatReturn, VatTransaction
 
 # Every TenantScoped model must appear here. The value names the API resource
 # whose adversarial tenant-A/tenant-B suite owns the behavioural proof.
@@ -130,6 +131,10 @@ TENANT_ISOLATION_MODELS: dict[type[object], str] = {
     Opportunity: "opportunities",
     CrmActivity: "CRM activities",
     CrmNote: "CRM notes",
+    # Phase 7 — VAT.
+    VatRate: "VAT rates",
+    VatTransaction: "VAT register entries",
+    VatReturn: "VAT returns",
 }
 
 # Role cannot inherit TenantScoped: system roles deliberately have tenant_id=NULL.

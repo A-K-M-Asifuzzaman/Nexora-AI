@@ -32,3 +32,4 @@ def import_all_models() -> None:
     from app.modules.rbac import models as rbac_models  # noqa: F401
     from app.modules.sales import models as sales_models  # noqa: F401
     from app.modules.tenancy import models as tenancy_models  # noqa: F401
+    from app.modules.vat import models as vat_models  # noqa: F401

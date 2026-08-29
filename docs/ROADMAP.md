@@ -191,13 +191,32 @@ is right to say so.**
 Not built: branch performance and refund-trend reports. The data supports both;
 they are additional queries, not new structure.
 
-## Phase 7 — VAT · `[ ]`
-- [ ] Configurable rates + tax categories
-- [ ] Inclusive / exclusive pricing
-- [ ] Input / output VAT
-- [ ] Tax invoice, VAT summary and reports
-- [ ] Return handling, documented rounding policy
-- [ ] Jurisdiction-specific reporting isolated behind an interface
+## Phase 7 — VAT · `[x]` COMPLETE (pending the implementer review)
+- [x] Configurable rates + tax categories
+- [x] Inclusive / exclusive pricing
+- [x] Input / output VAT
+- [x] VAT summary and register reports
+- [x] Return handling, documented rounding policy
+- [x] Jurisdiction-specific reporting isolated in the `vat` module
+
+**Exit state (live PostgreSQL 16.14, migration `0019` applied):**
+
+```
+make verify     lint + typecheck + test + build, all green
+backend         258 passed · 85.71% coverage
+frontend        38 passed
+alembic         check clean; downgrade base → upgrade head clean, 0 leftover enums
+```
+
+Rates are **effective-dated**, not edited: an invoice issued under 15% stays a
+15% invoice after the rate moves, and the return for that period still
+reconciles. Return box totals are **stored**, not derived on read — a return is
+a statement made to an authority on a date, and recomputing it later from live
+data would quietly change what you are on record as having said.
+
+Per `ACCOUNTING.md` §9.4 no jurisdiction is hardcoded, and the system claims no
+regulatory compliance. Not built: a tax-invoice document layout, which is
+presentation rather than structure.
 
 ## Phase 8 — AI Business Copilot · `[ ]`
 - [ ] Provider abstraction, model config
