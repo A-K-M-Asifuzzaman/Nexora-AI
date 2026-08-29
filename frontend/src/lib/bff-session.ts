@@ -3,6 +3,8 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, 
 import { cookies } from "next/headers";
 import { createClient, type RedisClientType } from "redis";
 
+import { isSameOrigin } from "./bff-public";
+
 const SESSION_COOKIE = "nexora_bff";
 const REFRESH_COOKIE = "nexora_rt";
 export const CSRF_COOKIE = "nexora_csrf";
@@ -199,6 +201,7 @@ export async function awaitRotatedToken(id: string, previous: string): Promise<R
 }
 
 export async function requireCsrf(request: Request): Promise<boolean> {
+  if (!isSameOrigin(request)) return false;
   const value = (await cookies()).get(CSRF_COOKIE)?.value;
   return Boolean(value && request.headers.get("X-CSRF-Token") === value);
 }

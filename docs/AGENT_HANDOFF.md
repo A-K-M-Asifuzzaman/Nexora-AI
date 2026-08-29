@@ -89,6 +89,9 @@ its isolation guarantees must be proven before anything is built on top.
 - [x] Refresh bounds ordered and asserted at load; timeout separated from failure so a slow refresh no longer logs the user out
 - [x] Live team invitation UI with server-provided role selection and permission-safe degradation
 - [x] Public invitation-acceptance page and fixed-path BFF proxy supporting links or pasted codes
+- [x] Email verification and password-recovery pages with fixed-path public BFF proxies
+- [x] Strict same-origin enforcement for public and authenticated BFF mutations
+- [x] Auth, tenancy, and RBAC service coverage brought above the Phase 1 90% target
 - [ ] Migrations, repositories/services/API, integration suites, frontend, infrastructure
 
 # Architecture Decisions
@@ -150,6 +153,11 @@ Phase 1 (Codex, in progress):
 - `frontend/src/lib/bff-session.test.ts`, `frontend/src/lib/bff-refresh.test.ts`
 - `frontend/src/app/invite/accept/page.tsx`, `frontend/src/app/api/bff/invitations/accept/route.ts`
 - `frontend/src/components/invitation-accept-form.tsx`, `frontend/src/components/invitation-accept-form.test.tsx`
+- `frontend/src/lib/bff-public.ts`, `frontend/src/lib/bff-public.test.ts`
+- `frontend/src/app/{verify-email,forgot-password,reset-password}/**`
+- `frontend/src/components/{email-verification-form,password-recovery-form}.tsx`
+- `frontend/src/components/auth-recovery.test.tsx`
+- `backend/tests/integration/{rbac/test_authorization_guards,tenancy/test_tenant_settings}.py`
 - `.github/workflows/ci.yml`
 - `.env.example`, `docs/API.md` §4.1 (Claude, BUILD 14)
 
@@ -179,6 +187,8 @@ Phase 1 (Codex, initial slice):
 - 6 BFF holder/waiter tests: bound ordering, slow-holder handoff, timeout preserving the session, upstream rejection clearing it, refresh abort, vanished session (4 verified failing pre-fix)
 - 1 frontend team-invitation test asserting the server role id and email payload
 - 2 frontend invitation-redemption tests covering role-field absence and pasted-code fallback
+- 5 frontend recovery/origin tests covering verification, reset, enumeration-safe messaging, and cross-origin rejection
+- 6 PostgreSQL integration tests covering permission listing/update, missing/duplicate roles, unsupported currency, and duplicate slugs
 
 # Commands Verified
 
@@ -337,6 +347,23 @@ npm run test                                      ✅ 16 passed across 5 files
 npm run build                                     ✅ Next.js 16.3.3; 11 routes
 npm audit --audit-level=high                      ✅ 0 vulnerabilities
 ```
+
+Codex Phase 1 completion slice:
+```
+backend ruff format --check / ruff check          ✅ 142 files / clean
+backend mypy app                                  ✅ 94 source files / clean
+backend pytest --cov --cov-fail-under=80          ✅ 139 passed; 86.47% total
+role_service / tenancy.service coverage           ✅ 96% / 93%
+alembic check                                     ✅ no new upgrade operations
+alembic downgrade -1 → upgrade head               ✅ 0011 reversible
+frontend npm run lint / typecheck                 ✅ clean
+frontend npm run test                             ✅ 24 passed across 8 files
+frontend npm run build                            ✅ Next.js 16.3.3; 18 routes
+frontend npm audit --audit-level=high             ✅ 0 vulnerabilities
+docker compose config --quiet                     ✅ valid
+docker info                                       ❌ daemon unavailable
+make verify (without runtime env)                 ❌ required Settings missing at pytest setup
+```
 DATABASE_URL=... .venv/bin/python -m pytest tests/integration -q
                                                     ✅ 7 passed
 .venv/bin/ruff format/check                        ✅ 80 files / all checks passed
@@ -359,6 +386,14 @@ alembic check                                      ✅ no new upgrade operations
 ```
 
 # Known Problems
+
+**Environment — `make verify` does not load runtime settings.** The target runs
+bare `pytest`, so integration collection errors when the seven required
+Settings values are not exported. The exact same suite passes with the
+documented PostgreSQL/Redis verification environment: 139 passed and 86.47%
+coverage. CI already supplies these values. Docker stack execution remains
+unverified locally because the Docker daemon socket is unavailable; Compose
+configuration validation passes.
 
 **RESOLVED — P1-33 / P1-34 / P1-35 concurrent BFF refresh.** Parallel BFF
 requests no longer submit the same rotating refresh token. A Redis single-flight

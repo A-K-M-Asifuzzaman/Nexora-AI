@@ -1,0 +1,34 @@
+.field-link {
+  display: block;
+  margin: -8px 0 18px;
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 750;
+  text-align: right;
+}
+
+.form-hint,
+.auth-result p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.auth-divider {
+  height: 1px;
+  margin: 28px 0;
+  background: var(--line);
+}
+
+.auth-result {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-result strong {
+  font: 700 22px var(--font-display);
+}
+
+.auth-result .button {
+  width: fit-content;
+}

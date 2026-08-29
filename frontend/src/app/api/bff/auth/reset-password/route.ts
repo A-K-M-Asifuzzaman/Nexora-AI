@@ -1,5 +1,5 @@
 import { proxyPublic } from "@/lib/bff-public";
 
 export async function POST(request: Request): Promise<Response> {
-  return proxyPublic(request, "auth/register");
+  return proxyPublic(request, "auth/reset-password");
 }
