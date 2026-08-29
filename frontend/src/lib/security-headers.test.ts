@@ -45,11 +45,31 @@ describe("SECURITY.md §11 headers", () => {
     const policy = createContentSecurityPolicy("test-nonce", false);
 
     expect(policy).toContain("script-src 'self' 'nonce-test-nonce' 'strict-dynamic'");
-    expect(policy).toContain("style-src 'self' 'nonce-test-nonce'");
     expect(policy).toContain("object-src 'none'");
     expect(policy).toContain("frame-ancestors 'none'");
-    expect(policy).not.toContain("'unsafe-inline'");
+    // The directive that stops XSS must never admit inline script or eval.
+    const scriptSrc = policy.split("; ").find((d) => d.startsWith("script-src"))!;
+    expect(scriptSrc).not.toContain("'unsafe-inline'");
+    expect(scriptSrc).not.toContain("'unsafe-eval'");
     expect(policy).not.toContain("'unsafe-eval'");
+  });
+
+  it("allows inline styles, and carries no nonce on style-src", () => {
+    // A nonce in a directive makes the browser IGNORE 'unsafe-inline' there, so
+    // these are mutually exclusive rather than belt-and-braces. next/font,
+    // React's stylesheet insertion and the dev overlay all inject styles we
+    // cannot nonce; with a nonce here the app renders unstyled. Regression for
+    // the console errors reported after the CSP first shipped.
+    const policy = createContentSecurityPolicy("test-nonce", false);
+    const styleSrc = policy.split("; ").find((d) => d.startsWith("style-src"))!;
+
+    expect(styleSrc).toBe("style-src 'self' 'unsafe-inline'");
+    expect(styleSrc).not.toContain("nonce-");
+  });
+
+  it("opens the HMR websocket in development only", () => {
+    expect(createContentSecurityPolicy("n", true)).toContain("connect-src 'self' ws: wss:");
+    expect(createContentSecurityPolicy("n", false)).toContain("connect-src 'self';");
   });
 
   it("permits eval only for the React development toolchain", () => {
