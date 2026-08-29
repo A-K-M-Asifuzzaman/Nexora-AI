@@ -173,6 +173,41 @@ class InventoryService:
         )
         return movement
 
+    async def post_movement_for_document(
+        self,
+        *,
+        warehouse_id: UUID,
+        product: Product,
+        movement_type: MovementType,
+        quantity: Decimal,
+        unit_cost: Decimal | None,
+        reference_type: str,
+        reference_id: UUID,
+    ) -> InventoryMovement:
+        """Post a movement from another module, inside that module's transaction.
+
+        Deliberately does **not** open a `service_transaction` and does not set
+        the tenant GUC: the caller already has both. A sales fulfillment must
+        commit its stock movement together with the document that caused it —
+        two transactions would let goods ship with no ledger entry, or the
+        reverse, and the ledger is the source of truth.
+
+        Every guard in `_post_movement` still applies: the balance row is locked
+        before availability is checked, `allow_negative_inventory` is honoured,
+        and moving-average cost moves only on an inward RECEIPT carrying a cost.
+        """
+        return await self._post_movement(
+            warehouse_id=warehouse_id,
+            product=product,
+            movement_type=movement_type,
+            quantity=quantity,
+            unit_cost=unit_cost,
+            reference_type=reference_type,
+            reference_id=reference_id,
+            notes=None,
+            idempotency_key=None,
+        )
+
     async def receipt(
         self, payload: MovementCreate, idempotency_key: str | None
     ) -> InventoryMovement:

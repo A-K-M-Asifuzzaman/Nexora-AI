@@ -1,0 +1,148 @@
+from decimal import Decimal
+from typing import cast
+from uuid import UUID
+
+from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.sales.models import (
+    CreditNote,
+    Invoice,
+    InvoiceLine,
+    Payment,
+    PaymentAllocation,
+    SalesOrder,
+    SalesOrderLine,
+)
+
+
+class SalesRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    def add(self, instance: object) -> None:
+        self.session.add(instance)
+
+    async def order(self, order_id: UUID, *, for_update: bool = False) -> SalesOrder | None:
+        statement = select(SalesOrder).where(SalesOrder.id == order_id)
+        if for_update:
+            statement = statement.with_for_update()
+        return cast(SalesOrder | None, await self.session.scalar(statement))
+
+    async def order_lines(
+        self, order_id: UUID, *, for_update: bool = False
+    ) -> list[SalesOrderLine]:
+        statement = (
+            select(SalesOrderLine)
+            .where(SalesOrderLine.sales_order_id == order_id)
+            # Ordered by product so that any operation locking several lines
+            # takes them in the same sequence as inventory's balance locks
+            # (ARCHITECTURE.md §12). Mismatched order between the two is how
+            # intermittent deadlocks appear.
+            .order_by(SalesOrderLine.product_id)
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return list(await self.session.scalars(statement))
+
+    async def invoice(self, invoice_id: UUID, *, for_update: bool = False) -> Invoice | None:
+        statement = select(Invoice).where(Invoice.id == invoice_id)
+        if for_update:
+            statement = statement.with_for_update()
+        return cast(Invoice | None, await self.session.scalar(statement))
+
+    async def invoice_lines(self, invoice_id: UUID) -> list[InvoiceLine]:
+        return list(
+            await self.session.scalars(
+                select(InvoiceLine)
+                .where(InvoiceLine.invoice_id == invoice_id)
+                .order_by(InvoiceLine.product_id)
+            )
+        )
+
+    async def invoice_line(self, line_id: UUID) -> InvoiceLine | None:
+        return cast(
+            InvoiceLine | None,
+            await self.session.scalar(select(InvoiceLine).where(InvoiceLine.id == line_id)),
+        )
+
+    async def payment(self, payment_id: UUID) -> Payment | None:
+        return cast(
+            Payment | None,
+            await self.session.scalar(select(Payment).where(Payment.id == payment_id)),
+        )
+
+    async def allocations(self, payment_id: UUID) -> list[PaymentAllocation]:
+        return list(
+            await self.session.scalars(
+                select(PaymentAllocation).where(PaymentAllocation.payment_id == payment_id)
+            )
+        )
+
+    async def credit_notes_for_invoice(self, invoice_id: UUID) -> list[CreditNote]:
+        return list(
+            await self.session.scalars(
+                select(CreditNote).where(CreditNote.invoice_id == invoice_id)
+            )
+        )
+
+    async def list_orders(
+        self, *, page: int, page_size: int, status: str | None, customer_id: UUID | None
+    ) -> tuple[list[SalesOrder], int]:
+        filters = []
+        if status:
+            filters.append(SalesOrder.status == status)
+        if customer_id:
+            filters.append(SalesOrder.customer_id == customer_id)
+        total = (
+            await self.session.scalar(select(func.count()).select_from(SalesOrder).where(*filters))
+        ) or 0
+        rows = await self.session.scalars(
+            select(SalesOrder)
+            .where(*filters)
+            .order_by(SalesOrder.order_date.desc(), SalesOrder.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        return list(rows), total
+
+    async def list_invoices(
+        self, *, page: int, page_size: int, status: str | None, customer_id: UUID | None
+    ) -> tuple[list[Invoice], int]:
+        filters = []
+        if status:
+            filters.append(Invoice.status == status)
+        if customer_id:
+            filters.append(Invoice.customer_id == customer_id)
+        total = (
+            await self.session.scalar(select(func.count()).select_from(Invoice).where(*filters))
+        ) or 0
+        rows = await self.session.scalars(
+            select(Invoice)
+            .where(*filters)
+            .order_by(Invoice.issue_date.desc(), Invoice.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        return list(rows), total
+
+    async def receivables(self) -> list[tuple[UUID, str, Decimal, Decimal]]:
+        """AR per customer, computed in the database.
+
+        Only ISSUED-and-later invoices are receivable: a DRAFT invoice is not a
+        claim on anyone. CANCELLED is excluded for the same reason.
+        """
+        rows = await self.session.execute(
+            text("""
+                SELECT c.id, c.name,
+                       COALESCE(SUM(i.total_amount), 0) AS invoiced,
+                       COALESCE(SUM(i.paid_amount), 0)  AS paid
+                  FROM customers c
+                  JOIN invoices i ON i.customer_id = c.id
+                 WHERE i.status IN ('ISSUED', 'PARTIALLY_PAID', 'PAID')
+                 GROUP BY c.id, c.name
+                HAVING COALESCE(SUM(i.total_amount), 0) - COALESCE(SUM(i.paid_amount), 0) <> 0
+                 ORDER BY c.name
+            """)
+        )
+        return [(row[0], row[1], row[2], row[3]) for row in rows]

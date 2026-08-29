@@ -17,6 +17,7 @@ class NumberAllocator:
     SERIES = {
         "quotation": "QT",
         "sales_order": "SO",
+        "fulfillment": "FUL",
         "invoice": "INV",
         "credit_note": "CN",
         "sales_payment": "RCP",

@@ -13,6 +13,7 @@ from app.core.errors import install_exception_handlers
 from app.core.ids import uuid7
 from app.core.logging import configure_logging
 from app.core.redis import create_redis_client
+from app.db.base import import_all_models
 from app.db.session import create_engine, create_session_factory
 from app.modules.platform.router import router as platform_router
 
@@ -38,6 +39,15 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    # Register every mapped model before the first request. Without this the
+    # metadata holds only whatever modules a request happened to import, and a
+    # cross-module foreign key cannot resolve: recording a customer payment
+    # raised NoReferencedTableError for `supplier_bills`, because
+    # payment_allocations references both invoices and supplier_bills while
+    # nothing had imported the purchasing models. Alembic and the tests already
+    # call this; the running application did not.
+    import_all_models()
+
     application_settings = settings or get_settings()
     configure_logging(
         application_settings.log_level,

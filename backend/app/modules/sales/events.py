@@ -1,0 +1,8 @@
+SALES_ORDER_CREATED = "sales.order_created"
+SALES_ORDER_CONFIRMED = "sales.order_confirmed"
+SALES_ORDER_CANCELLED = "sales.order_cancelled"
+FULFILLMENT_POSTED = "sales.fulfillment_posted"
+INVOICE_CREATED = "sales.invoice_created"
+INVOICE_ISSUED = "sales.invoice_issued"
+PAYMENT_RECORDED = "sales.payment_recorded"
+CREDIT_NOTE_ISSUED = "sales.credit_note_issued"
