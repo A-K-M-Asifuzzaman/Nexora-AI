@@ -1,0 +1,100 @@
+"""Integration-test fixtures.
+
+**Do not use `fastapi.testclient.TestClient` here.** It drives the app through a
+fresh event loop per request, while the engine's pooled asyncpg connections
+belong to the loop that created them — the second request in any test then dies
+with `got Future attached to a different loop`. `httpx.AsyncClient` over
+`ASGITransport` inside one loop is the pattern that works (finding P2-30).
+
+These tests need a migrated database. `DATABASE_URL` must point at one; the whole
+package skips when it is unset so a developer without a database still gets a
+green unit run.
+"""
+
+import os
+import uuid
+from collections.abc import AsyncIterator
+
+import httpx
+import pytest
+
+pytestmark = pytest.mark.skipif(not os.getenv("DATABASE_URL"), reason="DATABASE_URL not configured")
+
+PASSWORD = "correct-horse-battery"  # noqa: S105 -- test fixture credential, not a secret
+
+
+@pytest.fixture
+async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncClient]:
+    # Integration traffic is plain HTTP; development must not mark its cookie
+    # Secure or a standards-compliant client will correctly withhold it.
+    monkeypatch.setenv("REFRESH_COOKIE_SECURE", "false")
+    from app.core.config import get_settings
+    from app.main import create_app
+
+    # Rate limiting is **disabled** here. Every test reaches the app from
+    # 127.0.0.1, so they share one per-IP bucket and the third registration
+    # onwards would 429 — the suite would be testing the limiter, not the
+    # feature under test. The limits are real and enforced in production; they
+    # are exercised deliberately in `auth/test_rate_limits.py`, which builds its
+    # own app with them switched on.
+    settings = get_settings().model_copy(update={"rate_limit_enabled": False})
+    transport = httpx.ASGITransport(app=create_app(settings))
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+        yield c
+
+
+@pytest.fixture
+def email() -> str:
+    """A unique address per test.
+
+    Registration is intentionally idempotent-looking (it cannot reveal whether an
+    address exists), so tests must not share identities or they will silently
+    exercise the duplicate path instead of the one they name.
+    """
+    return f"user-{uuid.uuid4().hex[:12]}@acme-demo.com"
+
+
+async def register_and_login(
+    client: httpx.AsyncClient, email: str
+) -> tuple[dict[str, str], dict[str, object]]:
+    """Register, log in, and return (auth headers, login body)."""
+    await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": PASSWORD, "full_name": "Test User"},
+    )
+    response = await client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD})
+    body = response.json()
+    return {"Authorization": f"Bearer {body['access_token']}"}, body
+
+
+async def create_organization(
+    client: httpx.AsyncClient, headers: dict[str, str], slug: str | None = None
+) -> dict[str, object]:
+    slug = slug or f"org-{uuid.uuid4().hex[:10]}"
+    response = await client.post(
+        "/api/v1/tenants/",
+        headers=headers,
+        json={
+            "name": "Acme Traders",
+            "slug": slug,
+            "base_currency": "USD",
+            "timezone": "UTC",
+            "default_branch_code": "MAIN",
+            "default_branch_name": "Head Office",
+            "default_warehouse_code": "WH1",
+            "default_warehouse_name": "Main Store",
+        },
+    )
+    return response.json()
+
+
+async def tenant_headers(client: httpx.AsyncClient, email: str) -> dict[str, str]:
+    """Headers for a user who owns a fresh organization."""
+    headers, _ = await register_and_login(client, email)
+    org = await create_organization(client, headers)
+    switched = await client.post(
+        "/api/v1/auth/switch-tenant",
+        headers=headers,
+        json={"tenant_id": org["tenant"]["id"]},
+    )
+    return {"Authorization": f"Bearer {switched.json()['access_token']}"}
