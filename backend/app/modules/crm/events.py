@@ -1,0 +1,7 @@
+LEAD_CREATED = "crm.lead_created"
+LEAD_STATUS_CHANGED = "crm.lead_status_changed"
+LEAD_CONVERTED = "crm.lead_converted"
+OPPORTUNITY_CREATED = "crm.opportunity_created"
+OPPORTUNITY_STAGE_CHANGED = "crm.opportunity_stage_changed"
+ACTIVITY_LOGGED = "crm.activity_logged"
+NOTE_ADDED = "crm.note_added"

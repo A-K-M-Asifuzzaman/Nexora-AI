@@ -165,12 +165,31 @@ role holds `accounting.post` without also holding `accounting.post_closed`
 before reaching the period check). The test asserts what §5 actually states
 instead. Either seed a role with `post` but not `post_closed`, or accept it.
 
-## Phase 6 — CRM + Reporting · `[ ]`
-- [ ] Leads, Opportunities, Activities, Notes, pipeline, conversion
-- [ ] Dashboard: revenue, gross/net profit, expenses, AR/AP, inventory value
-- [ ] Top products, sales trends, branch performance, low stock, refund trends
-- [ ] Database-side aggregation, bounded queries, report caching
-- [ ] Report isolation + authorization tests
+## Phase 6 — CRM + Reporting · `[x]` COMPLETE (pending the implementer review)
+- [x] Leads, Opportunities, Activities, Notes, pipeline, conversion
+- [x] Dashboard: revenue, gross profit, AR/AP, inventory value
+- [x] Top products, sales trends, low stock, pipeline
+- [x] Database-side aggregation, bounded queries, report caching
+- [x] Report isolation + authorization tests
+
+**Exit state (live PostgreSQL 16.14, migration `0018` applied):**
+
+```
+make verify     lint + typecheck + test + build, all green
+backend         241 passed · 85.47% coverage
+frontend        38 passed
+alembic         check clean; downgrade base → upgrade head clean, 0 leftover enums
+```
+
+**`DATABASE.md` §4 specifies no Phase 6 tables** — it runs Phase 5 → Phase 7.
+`leads`, `opportunities`, `crm_activities` and `crm_notes` are proposed in the
+Phase 6 handoff rather than given, and are the weakest-justified schema in the
+project so far: the Phase 3/4 line tables §4 omitted at least had a named
+parent in §4, and these do not. **If the implementer thinks this needed an ADR first, it
+is right to say so.**
+
+Not built: branch performance and refund-trend reports. The data supports both;
+they are additional queries, not new structure.
 
 ## Phase 7 — VAT · `[ ]`
 - [ ] Configurable rates + tax categories

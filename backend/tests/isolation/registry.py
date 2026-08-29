@@ -17,6 +17,7 @@ from app.modules.catalog.models import (
     TaxCategory,
     UnitOfMeasure,
 )
+from app.modules.crm.models import CrmActivity, CrmNote, Lead, Opportunity
 from app.modules.idempotency.models import IdempotencyKey
 from app.modules.inventory.models import (
     InventoryBalance,
@@ -124,6 +125,11 @@ TENANT_ISOLATION_MODELS: dict[type[object], str] = {
     JournalEntryLine: "journal entry lines",
     FiscalPeriod: "fiscal periods",
     ProductCostLayer: "product cost layers",
+    # Phase 6 — CRM.
+    Lead: "leads",
+    Opportunity: "opportunities",
+    CrmActivity: "CRM activities",
+    CrmNote: "CRM notes",
 }
 
 # Role cannot inherit TenantScoped: system roles deliberately have tenant_id=NULL.

@@ -34,5 +34,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint("ck_invoice_lines_credited_within_invoiced", "invoice_lines", type_="check")
+    # The bare name: drop_constraint applies the same naming convention as
+    # create_check_constraint, so passing an already-prefixed name yields
+    # ck_invoice_lines_ck_invoice_lines_credited_within_invoiced and fails.
+    # `alembic check` cannot see this — only running the downgrade does.
+    op.drop_constraint("credited_within_invoiced", "invoice_lines", type_="check")
     op.drop_column("invoice_lines", "credited_quantity")
