@@ -218,14 +218,35 @@ Per `ACCOUNTING.md` §9.4 no jurisdiction is hardcoded, and the system claims no
 regulatory compliance. Not built: a tax-invoice document layout, which is
 presentation rather than structure.
 
-## Phase 8 — AI Business Copilot · `[ ]`
-- [ ] Provider abstraction, model config
-- [ ] Tool registry with mandatory permission declaration
-- [ ] 8 whitelisted analytics tools
-- [ ] Bounded date ranges, tool invocation logging
-- [ ] Untrusted-content framing, numeric grounding check
-- [ ] Chat UI
-- [ ] Cross-tenant, unauthorized-tool, injection tests
+## Phase 8 — AI Business Copilot · `[x]` BACKEND COMPLETE (pending the implementer review)
+- [x] Provider abstraction, model config
+- [x] Tool registry with mandatory permission declaration
+- [x] 8 whitelisted analytics tools
+- [x] Bounded date ranges, tool invocation logging
+- [x] Untrusted-content framing, numeric grounding check
+- [ ] Chat UI — **not built**
+- [x] Unauthorized-tool and injection tests
+
+**Exit state (migration `0020` applied):**
+
+```
+make verify     lint + typecheck + test + build, all green
+backend         284 passed · 85.09% coverage
+frontend        38 passed
+```
+
+**Provider:** running configuration is OpenAI; `AI.md` §2.6 still names
+Anthropic as the documented default. Both are implemented behind one
+`LLMProvider` protocol and selected by `LLM_PROVIDER`. **No security property
+depends on which is configured** — no SQL is generated (ADR-0017), every tool
+re-checks its permission against the authenticated context, ranges cap at 366
+days, and answers are grounding-checked.
+
+Every guardrail test runs **without an LLM call**, deliberately: the guarantees
+are deterministic and provider-independent, so proving them must not depend on a
+paid external service.
+
+**Not built:** the chat UI, and the per-tenant token budget in `AI.md` §6.
 
 ## Phase 9 — RAG · `[ ]`
 - [ ] Upload, validation, MIME sniffing, S3 storage

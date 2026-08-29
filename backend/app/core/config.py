@@ -60,6 +60,18 @@ class Settings(BaseSettings):
     # queue for a noticeable time, so this is seconds, not minutes.
     outbox_drain_seconds: float = Field(default=10.0, gt=0, le=3600)
 
+    # AI copilot (AI.md §2.6). The provider is a configuration choice; none of
+    # the copilot's security properties depend on which one is selected.
+    llm_provider: str = "openai"
+    openai_api_key: SecretStr | None = None
+    anthropic_api_key: SecretStr | None = None
+    llm_model_chat: str = "gpt-4o"
+    llm_model_analysis: str = "gpt-4o"
+    llm_model_embedding: str = "text-embedding-3-small"
+    llm_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    llm_max_tool_iterations: int = Field(default=4, ge=1, le=10)
+    ai_enabled: bool = True
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_origins(cls, value: object) -> object:

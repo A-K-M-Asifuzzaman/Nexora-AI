@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.modules.accounting.router import router as accounting_router
+from app.modules.ai.router import router as ai_router
 from app.modules.audit.router import router as audit_router
 from app.modules.auth.router import router as auth_router
 from app.modules.branches.router import router as branches_router
@@ -34,6 +35,7 @@ router.include_router(pos_router)
 router.include_router(sales_router)
 router.include_router(reporting_router)
 router.include_router(vat_router)
+router.include_router(ai_router)
 router.include_router(purchasing_router)
 router.include_router(members_router)
 router.include_router(roles_router)

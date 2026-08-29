@@ -14,6 +14,7 @@ type SalesOrder = {
 type Invoice = {
   id: string; invoice_number: string | null; customer_id: string; status: string;
   issue_date: string; total_amount: string; paid_amount: string;
+  sales_order_id: string | null;
 };
 type Receivable = {
   customer_id: string; customer_name: string; invoiced: string; paid: string; outstanding: string;
@@ -160,8 +161,18 @@ export function TradingPanel() {
     });
   });
 
-  const nextLabel = (status: string) =>
-    status === "DRAFT" ? "Confirm" : status === "FULFILLED" ? "Invoice" : "Fulfil";
+  // An order stays FULFILLED after it is invoiced — there is no INVOICED
+  // status — so status alone cannot tell whether anything is left to bill.
+  // The invoices already loaded here answer it without another round trip.
+  const isInvoiced = (order: SalesOrder) =>
+    invoices.some((invoice) => invoice.sales_order_id === order.id);
+
+  const nextAction = (order: SalesOrder): string | null => {
+    if (order.status === "CANCELLED") return null;
+    if (order.status === "DRAFT") return "Confirm";
+    if (order.status === "FULFILLED") return isInvoiced(order) ? null : "Invoice";
+    return "Fulfil";
+  };
 
   const issue = (invoice: Invoice) => run(() =>
     api(`sales/invoices/${invoice.id}/issue`, {
@@ -234,7 +245,7 @@ export function TradingPanel() {
           <div><strong>{order.order_number}</strong><small>{customerName(order.customer_id)} · {order.order_date}</small></div>
           <em className={order.status === "CANCELLED" ? "inactive" : "active"}>{order.status.replace(/_/g, " ").toLowerCase()}</em>
           <b className="amount">{money(order.total_amount)}</b>
-          {order.status !== "CANCELLED" && <button className="row-action" disabled={busy} onClick={() => void advance(order)}>{nextLabel(order.status)}</button>}
+          {nextAction(order) && <button className="row-action" disabled={busy} onClick={() => void advance(order)}>{nextAction(order)}</button>}
         </article>)}
       </div>
       <form className="inline-form order-form" onSubmit={createOrder}>

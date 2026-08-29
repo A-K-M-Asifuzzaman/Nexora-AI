@@ -44,6 +44,7 @@ class Perm(StrEnum):
     VAT_READ = "vat.read"
     VAT_MANAGE = "vat.manage"
     VAT_FILE = "vat.file"
+    AI_USE = "ai.use"
     POS_READ = "pos.read"
     POS_OPERATE = "pos.operate"
     POS_SESSION = "pos.session"
