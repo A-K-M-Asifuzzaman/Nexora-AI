@@ -1,0 +1,1 @@
+"""Movement-ledger inventory domain."""

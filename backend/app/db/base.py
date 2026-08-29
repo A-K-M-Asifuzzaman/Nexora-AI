@@ -21,6 +21,7 @@ def import_all_models() -> None:
     from app.modules.branches import models as branch_models  # noqa: F401
     from app.modules.catalog import models as catalog_models  # noqa: F401
     from app.modules.idempotency import models as idempotency_models  # noqa: F401
+    from app.modules.inventory import models as inventory_models  # noqa: F401
     from app.modules.outbox import models as outbox_models  # noqa: F401
     from app.modules.rbac import models as rbac_models  # noqa: F401
     from app.modules.tenancy import models as tenancy_models  # noqa: F401
