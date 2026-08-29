@@ -83,7 +83,14 @@ structured and may be empty.
 
 **Auth** `INVALID_CREDENTIALS` · `TOKEN_EXPIRED` · `TOKEN_INVALID` ·
 `SESSION_REVOKED` · `EMAIL_NOT_VERIFIED` · `ACCOUNT_LOCKED` ·
-`REFRESH_REUSE_DETECTED`
+`REFRESH_REUSE_DETECTED` · `REFRESH_IN_PROGRESS`
+
+`REFRESH_IN_PROGRESS` is BFF-only and is the one auth code that is **not**
+terminal: it is returned as `503` with `Retry-After` when another request holds
+the single-flight refresh lock and has not published a rotated token within the
+wait budget. The session is still live and the client should retry. Treating it
+as a logout is the defect it exists to prevent (P1-34) — clients must branch on
+the code, not on the fact that a refresh did not yield a token.
 
 **Authorization** `PERMISSION_DENIED` · `BRANCH_ACCESS_DENIED` ·
 `NO_ACTIVE_TENANT` · `CANNOT_MODIFY_OWN_ROLES` ·

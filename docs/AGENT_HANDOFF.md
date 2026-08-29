@@ -85,6 +85,9 @@ its isolation guarantees must be proven before anything is built on top.
 - [x] Permission-checked warehouse CRUD with tenant isolation, branch scope, and audit events
 - [x] Invitation literal route precedence fixed; redemption verified against migration 0011 RLS
 - [x] Live frontend organization onboarding/switcher and branch list/create management shell
+- [x] Distributed BFF refresh single-flight lock with owner-safe release and stale-session recheck
+- [x] Refresh bounds ordered and asserted at load; timeout separated from failure so a slow refresh no longer logs the user out
+- [x] Live team invitation UI with server-provided role selection and permission-safe degradation
 - [ ] Migrations, repositories/services/API, integration suites, frontend, infrastructure
 
 # Architecture Decisions
@@ -142,6 +145,10 @@ Phase 1 (Codex, in progress):
 - `backend/tests/structural/test_architecture_guards.py`
 - `backend/tests/integration/branches/test_warehouses.py`
 - `frontend/src/components/workspace-shell.tsx`, `frontend/src/components/workspace-shell.test.tsx`
+- `frontend/src/lib/bff-session.ts`, `frontend/src/lib/bff-upstream.ts`
+- `frontend/src/lib/bff-session.test.ts`, `frontend/src/lib/bff-refresh.test.ts`
+- `.github/workflows/ci.yml`
+- `.env.example`, `docs/API.md` §4.1 (Claude, BUILD 14)
 
 # Tests Added
 
@@ -165,6 +172,9 @@ Phase 1 (Codex, initial slice):
 - 2 live tenant-settings tests for cross-tenant isolation and immutable-field rejection
 - 3 warehouse integration tests covering CRUD, cross-tenant access/linking, and mass assignment
 - 1 frontend onboarding-state test; Vitest alias made safe for workspace paths containing spaces
+- 5 real-Redis BFF refresh-lock tests covering exclusivity, release, session separation, and lock ownership
+- 6 BFF holder/waiter tests: bound ordering, slow-holder handoff, timeout preserving the session, upstream rejection clearing it, refresh abort, vanished session (4 verified failing pre-fix)
+- 1 frontend team-invitation test asserting the server role id and email payload
 
 # Commands Verified
 
@@ -296,6 +306,24 @@ npm run typecheck                                 ✅ route generation + strict 
 npm run test                                      ✅ 2 tests passed
 npm run build                                     ✅ Next.js 16.3.3; 9 routes
 ```
+
+Codex BFF refresh single-flight slice:
+```
+npm run lint                                      ✅ zero warnings
+npm run typecheck                                 ✅ route generation + strict TS passed
+npm run test                                      ✅ 7 passed across 3 files; real Redis lock exercised
+npm run build                                     ✅ Next.js 16.3.3; 9 routes
+npm audit --audit-level=high                      ✅ 0 vulnerabilities
+```
+
+Codex frontend team-invitation slice:
+```
+npm run lint                                      ✅ zero warnings
+npm run typecheck                                 ✅ route generation + strict TS passed
+npm run test                                      ✅ 8 passed across 3 files
+npm run build                                     ✅ Next.js 16.3.3; 9 routes
+npm audit --audit-level=high                      ✅ 0 vulnerabilities
+```
 DATABASE_URL=... .venv/bin/python -m pytest tests/integration -q
                                                     ✅ 7 passed
 .venv/bin/ruff format/check                        ✅ 80 files / all checks passed
@@ -318,6 +346,20 @@ alembic check                                      ✅ no new upgrade operations
 ```
 
 # Known Problems
+
+**RESOLVED — P1-33 / P1-34 / P1-35 concurrent BFF refresh.** Parallel BFF
+requests no longer submit the same rotating refresh token. A Redis single-flight
+lock is owner-token protected, released atomically only by its holder, and
+followed by a session recheck inside the critical section.
+
+Review 13 found the guarantee was conditional on timing that nothing enforced.
+Both halves are now closed (BUILD 14): the upstream refresh is aborted at
+`BFF_REFRESH_TIMEOUT_MS`, strictly below the lock TTL, so the lock can no longer
+lapse under a running refresh (**P1-35**); and the waiter budget now exceeds the
+lock TTL while a timeout is reported as its own outcome, so a slow-but-successful
+refresh returns a retryable `503` instead of destroying the session (**P1-34**).
+The ordering `timeout < lock TTL < wait` is asserted at module load, not
+documented. Real-Redis tests for both run in frontend CI.
 
 **RESOLVED — P2-6 Role manual tenant scoping.** Role reads explicitly include
 only global system roles plus the active tenant's custom roles; resource writes
@@ -361,6 +403,277 @@ verification, reset, invitation, and resend email flows can be completed safely.
 All of Phase 1, per the handoff below.
 
 ---
+
+---
+
+# CLAUDE BUILD 14 — P1-34, P1-35, P2-36 closed
+
+Both P1s from Review 13 are fixed. This is `frontend/**`, which the ownership
+table assigns to Codex; done on explicit instruction, recorded here so the lane
+crossing is visible rather than silent — same as P1-25.
+
+```
+npm run lint       clean
+npm run typecheck  clean
+npm run test       14 passed across 4 files (real Redis)
+npm run build      Next.js 16.3.3; 9 routes
+```
+
+## The fix
+
+The three bounds are now named, configurable, and **ordered by an assertion at
+module load** rather than by a comment:
+
+```ts
+if (!(REFRESH_TIMEOUT_MS < REFRESH_LOCK_TTL_MS && REFRESH_LOCK_TTL_MS < REFRESH_WAIT_MS)) {
+  throw new Error("BFF refresh bounds must satisfy timeout < lock TTL < wait");
+}
+```
+
+| Bound | Was | Now |
+|---|---|---|
+| Upstream refresh | unbounded | **10 s**, `AbortSignal.timeout` |
+| Lock TTL | 15 s | 15 s |
+| Waiter budget | 2.5 s | **20 s** |
+
+That assertion is the actual deliverable. The individual numbers matter less
+than the fact that the relationship between them can no longer be broken —
+including by an env override, since all three read from the environment and the
+check runs after they are resolved.
+
+**P1-35** — the refresh now carries `signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS)`,
+so the holder is guaranteed to release or fail before the lock can lapse. An
+aborted refresh **fails closed**: the backend may or may not have rotated before
+we gave up, so the stored token can no longer be trusted, and presenting it again
+would be indistinguishable from replay.
+
+**P1-34** — `rotate` returns a discriminated `RefreshOutcome` instead of
+`string | null`:
+
+```ts
+{ status: "refreshed"; accessToken: string } | { status: "failed" } | { status: "timeout" }
+```
+
+Only `failed` clears the session. `timeout` returns `503` with `Retry-After: 1`
+and leaves the session alone. Collapsing those two states into one `null` was the
+whole defect — the timing mismatch only made it reachable.
+
+New code `REFRESH_IN_PROGRESS`, registered in `API.md` §4.1 with the note that it
+is the one auth code that is not terminal. Clients must branch on the code, not
+on "a refresh did not yield a token" — that inference is what made a slow backend
+look like a revoked session.
+
+## Tests — six, and I checked they fail on the old code
+
+`bff-refresh.test.ts` covers the holder/waiter interaction that `bff-session.test.ts`
+does not reach. Written against a reconstruction of the pre-fix tree, four fail,
+each for its own reason:
+
+```
+× keeps the bounds ordered refresh < lock TTL < wait      constants absent
+× leaves the session intact when the wait times out       expected 401 to be 503   (2562ms)
+× aborts a refresh that outruns its timeout               test timeout            (10005ms)
+× reports a vanished session as failed                    expected null to equal {status:'failed'}
+```
+
+The two middle lines are the findings themselves, measured: **2562 ms** is the
+old 2.5 s budget expiring and clearing a live session; **10005 ms** is the
+unbounded refresh never returning at all.
+
+The test file shrinks the three bounds through the same env vars production
+reads, so the ordering invariant still holds under test — the timings are
+smaller, the relationship between them is not weakened.
+
+One test (`hands a waiter the token published by a holder slower than the lock
+TTL`) passed on the old code in 126 ms, for the wrong reason: with the constants
+absent its `setTimeout` delay was `NaN` and fired immediately. It is a valid
+forward test but it is not a regression pin, and it is worth remembering that a
+test can pass on broken code by never running the scenario it names.
+
+`vitest.setup.ts` still mocks nothing globally; the `next/headers` mock is
+per-file because each file needs its own cookie jar. Anything else reaching
+`readSession` will need the same six lines.
+
+## Also changed
+
+- `.env.example` — the three bounds documented with the invariant and why each
+  half of it exists.
+- `docs/API.md` §4.1 — `REFRESH_IN_PROGRESS` registered.
+
+## Still open, unchanged
+
+| # | Finding | Severity |
+|---|---|---|
+| P2-21 | source-string tenant-scope guard → behavioural test | P2 |
+| P2-22 | unset-GUC test vacuous on empty DB | P2 |
+| P2-28 | blanket IntegrityError mislabelling | P2 |
+| P2-29 | `01-roles.sh` needs superuser (CI unaffected) | P2 |
+| P2-32 | per-IP limits collapse behind a proxy | **pre-production blocker** |
+| P3-24 | hardcoded system-role count | P3 |
+| P3-26 | self-suspension permitted | P3 |
+
+No P0 or P1 open.
+
+**Next, unchanged: the outbox dispatch worker.** Verification, reset and
+invitation mail all queue and are never sent, so every one of those flows is
+still unusable by a real user. It is the largest remaining gap in Phase 1.
+
+---
+
+# CLAUDE REVIEW 13 — BFF single-flight lock reviewed; two P1 left open
+
+The lock itself is right. `SET NX PX` for acquisition, a random owner token, a
+compare-and-delete Lua release, and the recheck inside the critical section are
+each the correct primitive, and the release script is the detail most
+implementations get wrong. The five tests use real Redis, and CI now stands one
+up. I re-ran everything claimed and it holds:
+
+```
+npm run lint       clean
+npm run typecheck  clean
+npm run test       7 passed across 3 files (real Redis)
+```
+
+But the mechanism is built out of **three timeouts that were never reconciled
+with each other**, and two of the three orderings are wrong. The lock prevents
+the replay it was written for; it introduces a second path to the same
+user-visible outcome, and leaves a third open.
+
+The three values, as they stand:
+
+| Bound | Value | Where |
+|---|---|---|
+| Waiter budget | 25 × 100 ms = **2.5 s** | `bff-session.ts:128` |
+| Lock TTL | **15 s** | `bff-session.ts:109` |
+| Upstream refresh | **unbounded** | `bff-upstream.ts:52` |
+
+The correct ordering is `waiter budget > lock TTL > refresh timeout`. The actual
+ordering is the reverse of it at both ends.
+
+---
+
+## P1-34 — a waiter that times out logs the user out
+
+**Files:** `bff-session.ts:127-137` · `bff-upstream.ts:79-82`
+
+`awaitRotatedToken` gives up after 25 polls at 100 ms. Measured, not inferred:
+
+```
+>>> waiter returned null after 2547ms
+>>> lock TTL is 15000ms; upstream refresh fetch has no timeout
+```
+
+The waiter's `null` is indistinguishable from a failed refresh, and
+`proxyUpstream:81` treats it as one:
+
+```ts
+if (!token) { await clearSession(); return ... 401 SESSION_REVOKED }
+```
+
+So if the holder's refresh takes longer than **2.55 s** — a cold backend, a slow
+DB, one network hiccup — every queued request calls `clearSession()`. That drops
+the browser's session cookie *and* deletes the Redis session key. Depending on
+which side of the holder's `writeSession` it lands, it either destroys the
+freshly rotated session or leaves it orphaned in Redis with the cookie gone.
+
+Either way the user is logged out — by a refresh that **succeeded**. That is the
+same outcome P1-33 was opened to fix, reached by a different route. A 2.5 s
+budget guarding a 15 s lock is not a safety margin; it is a guarantee that any
+slow refresh becomes a logout.
+
+**Fix — two parts, both needed.**
+
+1. The waiter must not outlive its usefulness *before* the holder does. Its
+   budget has to exceed the lock TTL plus a margin, so it never gives up while a
+   holder can still legitimately be working.
+2. `rotate` must distinguish **"the wait timed out"** from **"the refresh
+   failed"**. Only the second may clear the session. A timeout is a retryable
+   condition and should surface as `503` with `Retry-After`, leaving the session
+   intact — the request failed, the session did not.
+
+Collapsing those two states into one `null` is the actual defect; the timing
+mismatch is what makes it reachable.
+
+## P1-35 — nothing bounds the critical section to the lock TTL
+
+**File:** `bff-upstream.ts:52-54`
+
+The refresh `fetch` carries no `signal`. Nothing stops it exceeding the lock's
+15 s TTL, and the lock is not renewed while it runs.
+
+At 15 s the lock expires under the still-running holder. The next request
+acquires it cleanly and performs the recheck on line 50 — which **passes**,
+because the first holder has not published anything yet, so the stored access
+token is still the stale one. It proceeds to `fetch` with the same refresh
+token. Reuse detection fires and the family is revoked.
+
+The recheck cannot catch this. It compares against what the holder has
+*published*, and the whole condition is that the holder has not published yet.
+The single-flight guarantee therefore holds only *if the refresh finishes inside
+15 s*, and nothing in the code enforces that premise.
+
+**Fix:** `signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS)` with the timeout
+strictly below the lock TTL, so the holder is guaranteed to have released or
+failed before the lock can lapse. A lock TTL that does not bound the operation it
+protects is decoration.
+
+## P2-36 — the tests pin the primitive, not the mechanism
+
+`bff-session.test.ts` covers `acquireRefreshLock` / `releaseRefreshLock` well:
+exclusivity, re-acquisition, per-session independence, and ownership on release.
+All five are real assertions against real Redis.
+
+None of them touch `rotate()` or `awaitRotatedToken`. The thing under test is
+"Redis `SET NX` is exclusive" — which was never in doubt. The behaviour the
+finding is about is the *interaction* between holder and waiter, and it is
+untested.
+
+The reason it is untested is mechanical: `vitest.setup.ts` mocks nothing, so
+`next/headers` `cookies()` is unavailable and any function reaching `readSession`
+cannot be called from a test at all. I confirmed both P1s above only by adding a
+temporary `next/headers` mock, which is what the suite needs permanently.
+
+Required, once P1-34 and P1-35 are fixed:
+
+- holder slower than the waiter budget → waiter still returns the rotated token,
+  and the session survives
+- refresh genuinely rejected upstream → session cleared, `401`
+- wait timed out → `503`, session **not** cleared
+- refresh exceeding the lock TTL → aborted, not left running
+
+The first and third are the ones that would have caught this. The same lesson as
+BUILD 10: a test that has never failed for the right reason is not yet a test.
+
+## Note on the handoff entry
+
+`# Known Problems` lists P1-33 as RESOLVED and `# Completed` ticks the lock. The
+lock is real and the entry is fair, but it is now qualified above — the
+concurrent-replay window is narrowed, not closed, while P1-35 stands.
+
+## Open
+
+**All three closed in BUILD 14 below, at your direction.**
+
+| # | Finding | Severity |
+|---|---|---|
+| P1-34 | waiter timeout clears a live session | **P1 — fixed** |
+| P1-35 | refresh unbounded; lock TTL can lapse mid-flight | **P1 — fixed** |
+| P2-36 | no test covers holder/waiter interaction | P2 — fixed |
+| P2-21 | source-string tenant-scope guard → behavioural test | P2 |
+| P2-22 | unset-GUC test vacuous on empty DB | P2 |
+| P2-28 | blanket IntegrityError mislabelling | P2 |
+| P2-29 | `01-roles.sh` needs superuser (CI unaffected) | P2 |
+| P2-32 | per-IP limits collapse behind a proxy | **pre-production blocker** |
+| P3-24 | hardcoded system-role count | P3 |
+| P3-26 | self-suspension permitted | P3 |
+
+Both P1s are in `frontend/**`, which the ownership table assigns to Codex. Not
+implementing them per that rule — they are small and surgical, so say the word if
+you would rather I close them directly, as with P1-25.
+
+Phase 1 priority is unchanged otherwise: the **outbox dispatch worker** is still
+the largest gap — verification, reset and invitation mail all queue and are never
+sent, so every one of those flows is unusable by a real user.
 
 ---
 
