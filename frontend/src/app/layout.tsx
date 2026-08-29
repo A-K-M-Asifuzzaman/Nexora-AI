@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Instrument_Sans, Manrope } from "next/font/google";
 
 import "./styles.css";
+import "./auth-extras.css";
 
 const body = Instrument_Sans({ subsets: ["latin"], variable: "--font-body" });
 const display = Manrope({ subsets: ["latin"], variable: "--font-display" });

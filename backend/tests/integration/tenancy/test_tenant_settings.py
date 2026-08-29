@@ -2,7 +2,7 @@ import uuid
 
 import httpx
 
-from tests.integration.conftest import tenant_headers
+from tests.integration.conftest import create_organization, register_and_login, tenant_headers
 
 
 async def test_current_tenant_settings_are_isolated_by_signed_tenant_context(
@@ -36,3 +36,52 @@ async def test_tenant_update_rejects_identity_and_immutable_fields(
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+async def test_onboarding_rejects_an_unsupported_currency(client: httpx.AsyncClient) -> None:
+    headers, _ = await register_and_login(
+        client, f"unsupported-currency-{uuid.uuid4().hex[:8]}@example.com"
+    )
+    response = await client.post(
+        "/api/v1/tenants/",
+        headers=headers,
+        json={
+            "name": "Unsupported Currency",
+            "slug": f"unsupported-{uuid.uuid4().hex[:8]}",
+            "base_currency": "ZZZ",
+            "timezone": "UTC",
+            "default_branch_code": "MAIN",
+            "default_branch_name": "Head Office",
+            "default_warehouse_code": "WH1",
+            "default_warehouse_name": "Main Store",
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+async def test_onboarding_rejects_a_duplicate_slug(client: httpx.AsyncClient) -> None:
+    slug = f"duplicate-{uuid.uuid4().hex[:8]}"
+    first_headers, _ = await register_and_login(
+        client, f"first-duplicate-{uuid.uuid4().hex[:8]}@example.com"
+    )
+    second_headers, _ = await register_and_login(
+        client, f"second-duplicate-{uuid.uuid4().hex[:8]}@example.com"
+    )
+    await create_organization(client, first_headers, slug)
+    response = await client.post(
+        "/api/v1/tenants/",
+        headers=second_headers,
+        json={
+            "name": "Duplicate Slug",
+            "slug": slug,
+            "base_currency": "USD",
+            "timezone": "UTC",
+            "default_branch_code": "MAIN",
+            "default_branch_name": "Head Office",
+            "default_warehouse_code": "WH1",
+            "default_warehouse_name": "Main Store",
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "DUPLICATE_RESOURCE"
