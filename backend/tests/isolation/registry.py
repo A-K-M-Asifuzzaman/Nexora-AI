@@ -18,7 +18,31 @@ from app.modules.inventory.models import (
     StockTransfer,
     StockTransferLine,
 )
+from app.modules.numbering.models import DocumentSequence
+from app.modules.parties.models import Customer, Supplier
+from app.modules.purchasing.models import (
+    GoodsReceipt,
+    GoodsReceiptLine,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SupplierBill,
+    SupplierBillLine,
+)
 from app.modules.rbac.models import Role
+from app.modules.sales.models import (
+    CreditNote,
+    CreditNoteLine,
+    Fulfillment,
+    FulfillmentLine,
+    Invoice,
+    InvoiceLine,
+    Payment,
+    PaymentAllocation,
+    Quotation,
+    QuotationLine,
+    SalesOrder,
+    SalesOrderLine,
+)
 from app.modules.tenancy.models import Invitation, Membership, Tenant
 
 # Every TenantScoped model must appear here. The value names the API resource
@@ -43,6 +67,28 @@ TENANT_ISOLATION_MODELS: dict[type[object], str] = {
     IdempotencyKey: "idempotency infrastructure",
     Invitation: "invitations",
     Membership: "members",
+    # Phase 3 — parties, sales and purchasing.
+    Customer: "customers",
+    Supplier: "suppliers",
+    DocumentSequence: "document numbering sequences",
+    Quotation: "quotations",
+    QuotationLine: "quotation lines",
+    SalesOrder: "sales orders",
+    SalesOrderLine: "sales order lines",
+    Fulfillment: "fulfillments",
+    FulfillmentLine: "fulfillment lines",
+    Invoice: "invoices",
+    InvoiceLine: "invoice lines",
+    Payment: "payments",
+    PaymentAllocation: "payment allocations",
+    CreditNote: "credit notes",
+    CreditNoteLine: "credit note lines",
+    PurchaseOrder: "purchase orders",
+    PurchaseOrderLine: "purchase order lines",
+    GoodsReceipt: "goods receipts",
+    GoodsReceiptLine: "goods receipt lines",
+    SupplierBill: "supplier bills",
+    SupplierBillLine: "supplier bill lines",
 }
 
 # Role cannot inherit TenantScoped: system roles deliberately have tenant_id=NULL.
