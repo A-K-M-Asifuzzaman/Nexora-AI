@@ -84,7 +84,7 @@ by tests that assert against the **movement ledger**, not only the cached
 balance — a lost update and a correct ledger can reach the same final number.
 No P0 or P1 open.
 
-## Phase 3 — Sales + Purchasing · `[ ]`
+## Phase 3 — Sales + Purchasing · `[~]` IN PROGRESS — schema only
 - [ ] Customers, Suppliers
 - [ ] Quotation → Sales Order → Fulfillment → Invoice → Payment
 - [ ] Purchase Request → PO → Goods Receipt → Supplier Bill → Payment
