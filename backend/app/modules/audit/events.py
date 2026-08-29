@@ -1,0 +1,9 @@
+TENANT_CREATED = "tenant.created"
+TENANT_SETTINGS_CHANGED = "tenant.settings_changed"
+BRANCH_CREATED = "branch.created"
+BRANCH_UPDATED = "branch.updated"
+BRANCH_DEACTIVATED = "branch.deactivated"
+USER_REGISTERED = "user.registered"
+USER_EMAIL_VERIFIED = "user.email_verified"
+USER_PASSWORD_CHANGED = "user.password_changed"  # noqa: S105 -- audit action code
+USER_PASSWORD_RESET = "user.password_reset"  # noqa: S105 -- audit action code

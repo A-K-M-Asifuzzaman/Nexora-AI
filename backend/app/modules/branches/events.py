@@ -1,0 +1,5 @@
+BRANCH_CREATED = "branch.created"
+BRANCH_UPDATED = "branch.updated"
+BRANCH_DEACTIVATED = "branch.deactivated"
+WAREHOUSE_CREATED = "warehouse.created"
+WAREHOUSE_UPDATED = "warehouse.updated"

@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+  JWT_SECRET_KEY: 01234567890123456789012345678901
+  DATABASE_URL: postgresql+asyncpg://nexora_app:app_pw@127.0.0.1:5432/nexora_test
+  DATABASE_URL_SYNC: postgresql+psycopg://nexora_app:app_pw@127.0.0.1:5432/nexora_test
+  DATABASE_OWNER_URL: postgresql+psycopg://nexora_owner:owner_pw@127.0.0.1:5432/nexora_test
+  REDIS_URL: redis://127.0.0.1:6379/0
+  CELERY_BROKER_URL: redis://127.0.0.1:6379/1
+  CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/2
+
+jobs:
+  backend-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -e './backend[dev]'
+      - run: ruff format --check . && ruff check .
+        working-directory: backend
+      - run: mypy app
+        working-directory: backend
+
+  backend-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: {POSTGRES_DB: nexora_test, POSTGRES_USER: nexora_owner, POSTGRES_PASSWORD: owner_pw}
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nexora_owner -d nexora_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -e './backend[dev]'
+      - name: Create non-owner application role
+        env: {PGPASSWORD: owner_pw}
+        run: psql -h 127.0.0.1 -U nexora_owner -d nexora_test -v ON_ERROR_STOP=1 -c "CREATE ROLE nexora_app LOGIN PASSWORD 'app_pw' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS" -c "GRANT CONNECT ON DATABASE nexora_test TO nexora_app" -c "GRANT USAGE ON SCHEMA public TO nexora_app" -c "ALTER DEFAULT PRIVILEGES FOR ROLE nexora_owner IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO nexora_app"
+      - run: alembic upgrade head
+        working-directory: backend
+      - run: pytest --cov=app --cov-report=term-missing --cov-fail-under=80
+        working-directory: backend
+
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: {POSTGRES_DB: nexora_test, POSTGRES_USER: nexora_owner, POSTGRES_PASSWORD: owner_pw}
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nexora_owner -d nexora_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -e ./backend
+      - name: Create application role
+        env: {PGPASSWORD: owner_pw}
+        run: psql -h 127.0.0.1 -U nexora_owner -d nexora_test -c "CREATE ROLE nexora_app LOGIN PASSWORD 'app_pw' NOSUPERUSER NOBYPASSRLS" -c "ALTER DEFAULT PRIVILEGES FOR ROLE nexora_owner IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO nexora_app"
+      - run: alembic upgrade head && alembic check && alembic downgrade -1 && alembic upgrade head
+        working-directory: backend
+
+  frontend-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json}
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run lint && npm run typecheck
+        working-directory: frontend
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json}
+      - run: npm ci && npm run test
+        working-directory: frontend
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json}
+      - run: npm ci && npm run build
+        working-directory: frontend
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - uses: actions/setup-node@v4
+        with: {node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json}
+      - run: pip install -e ./backend pip-audit
+      - run: pip-audit
+      - run: npm ci && npm audit --audit-level=high
+        working-directory: frontend
+      - uses: gitleaks/gitleaks-action@v2
+
+  e2e-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d --build postgres redis migrate backend frontend
+      - run: curl --fail --retry 20 --retry-delay 3 http://localhost:8000/health
+      - run: curl --fail --retry 20 --retry-delay 3 http://localhost:3000/
+      - if: always()
+        run: docker compose logs && docker compose down -v
