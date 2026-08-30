@@ -482,7 +482,7 @@ class SalesService:
                 product = await self._product(line.product_id)
                 if product.is_stock_tracked:
                     # Consumes stock through the movement ledger — never by
-                    # writing a balance directly (the ruleset, ARCHITECTURE.md §12).
+                    # writing a balance directly (ARCHITECTURE.md §12).
                     await self.inventory.post_movement_for_document(
                         warehouse_id=order.warehouse_id,
                         product=product,

@@ -7,7 +7,7 @@
 #
 # Without these exported, `pytest` fails constructing Settings before it
 # collects a single test, which reads as a broken suite rather than a missing
-# environment — the failure the implementer hit and recorded under Known Problems.
+# environment — a failure recorded under Known Problems.
 JWT_SECRET_KEY        ?= 01234567890123456789012345678901
 DATABASE_URL          ?= postgresql+asyncpg://nexora_app:app_pw@127.0.0.1:5432/nexora_test
 DATABASE_URL_SYNC     ?= postgresql+psycopg://nexora_app:app_pw@127.0.0.1:5432/nexora_test

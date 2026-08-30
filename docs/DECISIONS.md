@@ -3,8 +3,9 @@
 Format: Context → Decision → Consequences. Consequences must state the **cost**,
 not only the benefit; an ADR that lists no downside has not been thought through.
 
-The implementer does not author ADRs. If implementation shows one is wrong, the implementer stops and
-records the conflict in `the handoff log` under `# Known Problems`.
+The implementer does not author ADRs. If implementation shows one is wrong, the
+implementer stops and records the conflict in the phase handoff log under
+`# Known Problems`.
 
 ---
 
@@ -364,13 +365,13 @@ application-level enforcement stays mandatory.
 ---
 
 ## ADR-0023 — Platform identity events are security events, not tenant audit
-**Status:** Accepted · Phase 1 · **Resolves the conflict the implementer raised**
+**Status:** Accepted · Phase 1 · **Resolves a conflict raised during implementation**
 
 **Context.** The Phase 1 handoff requires a `user.registered` audit event and a
 verification email dispatched through the outbox. But registration happens
 *before* any tenant exists, while `audit_events.tenant_id` and
 `outbox_events.tenant_id` are both `NOT NULL`. The requirements cannot all hold.
-Correctly identified by the implementer during implementation.
+Correctly identified during implementation.
 
 **Decision.**
 

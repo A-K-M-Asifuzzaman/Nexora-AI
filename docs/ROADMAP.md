@@ -57,7 +57,7 @@ observed end-to-end against MailHog because Docker was unavailable (P2-40).
 Run it when Docker Desktop is up; every recovery flow depends on it.
 
 ## Phase 2 — Catalog + Inventory · `[x]` COMPLETE
-Binding specification: `the handoff log` → *ARCHITECT HANDOFF — PHASE 2*.
+Binding specification: the phase handoff log → *ARCHITECT HANDOFF — PHASE 2*.
 - [x] Products, variants, categories, brands, UoM, tax categories
 - [x] SKU / barcode tenant-unique constraints
 - [x] Warehouses (semantics)
@@ -133,7 +133,7 @@ was wired into `create_app`.
 - [ ] Keyboard-first UI
 - [ ] Rollback, duplicate-key, concurrent-final-item tests
 
-## Phase 5 — Accounting · `[x]` COMPLETE (pending the implementer review)
+## Phase 5 — Accounting · `[x]` COMPLETE (pending implementer review)
 - [ ] Chart of Accounts + system accounts seeded per tenant
 - [ ] Journals, entries, lines, DB-enforced balance
 - [ ] Posted-entry immutability triggers
@@ -165,7 +165,7 @@ role holds `accounting.post` without also holding `accounting.post_closed`
 before reaching the period check). The test asserts what §5 actually states
 instead. Either seed a role with `post` but not `post_closed`, or accept it.
 
-## Phase 6 — CRM + Reporting · `[x]` COMPLETE (pending the implementer review)
+## Phase 6 — CRM + Reporting · `[x]` COMPLETE (pending implementer review)
 - [x] Leads, Opportunities, Activities, Notes, pipeline, conversion
 - [x] Dashboard: revenue, gross profit, AR/AP, inventory value
 - [x] Top products, sales trends, low stock, pipeline
@@ -185,13 +185,13 @@ alembic         check clean; downgrade base → upgrade head clean, 0 leftover e
 `leads`, `opportunities`, `crm_activities` and `crm_notes` are proposed in the
 Phase 6 handoff rather than given, and are the weakest-justified schema in the
 project so far: the Phase 3/4 line tables §4 omitted at least had a named
-parent in §4, and these do not. **If the implementer thinks this needed an ADR first, it
+parent in §4, and these do not. **If this needed an ADR first, it
 is right to say so.**
 
 Not built: branch performance and refund-trend reports. The data supports both;
 they are additional queries, not new structure.
 
-## Phase 7 — VAT · `[x]` COMPLETE (pending the implementer review)
+## Phase 7 — VAT · `[x]` COMPLETE (pending implementer review)
 - [x] Configurable rates + tax categories
 - [x] Inclusive / exclusive pricing
 - [x] Input / output VAT
@@ -218,7 +218,7 @@ Per `ACCOUNTING.md` §9.4 no jurisdiction is hardcoded, and the system claims no
 regulatory compliance. Not built: a tax-invoice document layout, which is
 presentation rather than structure.
 
-## Phase 8 — AI Business Copilot · `[x]` BACKEND COMPLETE (pending the implementer review)
+## Phase 8 — AI Business Copilot · `[x]` BACKEND COMPLETE (pending implementer review)
 - [x] Provider abstraction, model config
 - [x] Tool registry with mandatory permission declaration
 - [x] 8 whitelisted analytics tools

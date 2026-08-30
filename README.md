@@ -114,7 +114,6 @@ Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 | [`docs/AI.md`](docs/AI.md) | Copilot tools, RAG isolation, ML honesty rules |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | 21 ADRs, each with its cost stated |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phase checklist |
-| [`the handoff log`](the handoff log) | Live state transfer between agents |
 
 ---
 
@@ -141,15 +140,14 @@ Open security gaps are tracked honestly in [`docs/SECURITY.md`](docs/SECURITY.md
 
 ## Development model
 
-Two agents, one architecture:
+Two roles, one architecture:
 
-- **the architect role** — architecture, domain modelling, invariants, API contracts,
+- **Architect** — architecture, domain modelling, invariants, API contracts,
   security design, code review, defect severity classification.
-- **the implementer** — implementation, migrations, tests, Docker, CI, debugging, fixes.
+- **Implementer** — implementation, migrations, tests, Docker, CI, debugging, fixes.
 
 ```
-the architect: design → the implementer: implement → the architect: review (P0–P3) → the implementer: fix → verify → commit
+design → implement → review (P0–P3) → fix → verify → commit
 ```
 
 No phase begins while a P0 or P1 finding is open in a phase it depends on.
-Contract: [`the project brief`](the project brief) · [`the ruleset`](the ruleset) · [`the ruleset`](the ruleset)

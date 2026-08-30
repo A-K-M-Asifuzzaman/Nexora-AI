@@ -55,9 +55,6 @@ Hard rules:
 
 ```
 nexora/
-├── the project brief                     shared agent contract
-├── the ruleset                     the architect standing rules
-├── the ruleset                     the implementer standing rules
 ├── README.md
 ├── .env.example                  canonical config contract
 ├── docker-compose.yml            dev stack
@@ -71,8 +68,7 @@ nexora/
 │   ├── SECURITY.md
 │   ├── AI.md
 │   ├── DECISIONS.md
-│   ├── ROADMAP.md
-│   └── the handoff log
+│   └── ROADMAP.md
 ├── backend/
 │   ├── pyproject.toml            deps + ruff + mypy + pytest config
 │   ├── alembic.ini
@@ -865,6 +861,6 @@ Consequences: what this costs us, what it buys, what it forecloses
 "Architecturally significant" = changes a module boundary, a data model
 invariant, a security control, a transaction boundary, or a dependency.
 
-The implementer does not author ADRs. If implementation reveals that an ADR is wrong,
-the implementer **stops** and records the conflict in `the handoff log` under
-`# Known Problems`.
+The implementer does not author ADRs. If implementation reveals that an ADR is
+wrong, the implementer **stops** and records the conflict in the phase handoff
+log under `# Known Problems`.

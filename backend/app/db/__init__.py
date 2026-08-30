@@ -4,8 +4,8 @@
 Importing it here means the guard activates whenever *anything* under `app.db`
 is imported — which every session consumer does — rather than depending on a
 call site remembering to import it. It was previously imported by nothing, so
-Layer 2 of tenant isolation was silently inactive (see the handoff log,
-review finding P0-1). Do not remove this import; `tests/structural/
+Layer 2 of tenant isolation was silently inactive until this import was added.
+Do not remove this import; `tests/structural/
 test_tenant_guard_registered.py` fails if the listeners are not attached.
 """
 

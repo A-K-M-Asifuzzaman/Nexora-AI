@@ -120,14 +120,14 @@ POS that oversells under concurrency is a failed build of this system.
 
 ## 8. Delivery Model
 
-Two agents, one architecture (`the project brief` §1–2):
+Two roles, one architecture:
 
-- **the architect role** — architecture, domain and data modelling, invariants, API
+- **Architect** — architecture, domain and data modelling, invariants, API
   contracts, security design, review and severity classification.
-- **the implementer** — implementation, migrations, tests, Docker, CI, debugging, fixes.
+- **Implementer** — implementation, migrations, tests, Docker, CI, debugging, fixes.
 
 Cycle per phase: **design → implement → review → fix → verify → commit.**
-Never two agents implementing halves of the same feature.
+Never two people implementing halves of the same feature.
 
 Phase gate: no phase begins while a P0 or P1 finding is open in a dependency.
 
@@ -143,4 +143,3 @@ Phase gate: no phase begins while a P0 or P1 finding is open in a dependency.
 | `docs/AI.md` | Copilot tools, RAG isolation, forecasting honesty rules |
 | `docs/DECISIONS.md` | 21 ADRs with costs stated |
 | `docs/ROADMAP.md` | Phase checklist |
-| `the handoff log` | Live state transfer between agents |

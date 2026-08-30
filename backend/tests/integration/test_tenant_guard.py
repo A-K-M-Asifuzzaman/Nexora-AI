@@ -3,8 +3,8 @@
 Self-contained: builds its own engine from the environment so it runs before the
 shared integration fixtures exist. Fold into `tests/conftest.py` when that lands.
 
-Requires a migrated database. See the handoff log "Reproducing this
-locally" for the two-role bootstrap.
+Requires a migrated database with the two-role bootstrap applied; see
+`infra/postgres/init/01-roles.sql`.
 """
 
 import os
