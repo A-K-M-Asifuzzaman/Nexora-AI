@@ -48,3 +48,11 @@ minio_data/
 # ─── Logs ─────────────────────────────────────────────────────────────────────
 *.log
 logs/
+
+# ─── Local planning docs (kept on disk, not tracked) ──────────────────────────
+/the ruleset
+/the ruleset
+/frontend/the ruleset
+/frontend/the ruleset
+/the project brief
+/the handoff log
