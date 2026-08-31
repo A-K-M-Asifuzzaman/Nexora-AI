@@ -24,10 +24,7 @@ PASSWORD = "correct-horse-battery"  # noqa: S105 -- test fixture credential, not
 
 
 @pytest.fixture
-async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncClient]:
-    # Integration traffic is plain HTTP; development must not mark its cookie
-    # Secure or a standards-compliant client will correctly withhold it.
-    monkeypatch.setenv("REFRESH_COOKIE_SECURE", "false")
+async def client() -> AsyncIterator[httpx.AsyncClient]:
     from app.core.config import get_settings
     from app.main import create_app
 
@@ -37,7 +34,21 @@ async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncCl
     # feature under test. The limits are real and enforced in production; they
     # are exercised deliberately in `auth/test_rate_limits.py`, which builds its
     # own app with them switched on.
-    settings = get_settings().model_copy(update={"rate_limit_enabled": False})
+    #
+    # `refresh_cookie_secure` is overridden the same explicit way, not via an
+    # env-var monkeypatch: `get_settings()` is process-wide `@lru_cache`d, so
+    # whichever test calls it *first* decides the cached value for the rest of
+    # the run — and several fixtures elsewhere (e.g. `anomaly`/`forecasting`'s
+    # `db_session`) call it directly with no override, for settings that only
+    # ever need a database URL from it. Monkeypatching the env var here raced
+    # that first call and lost whenever one of those ran first, silently
+    # setting `Secure` on the cookie — which a standards-compliant client
+    # correctly withholds over this fixture's plain-HTTP `testserver` origin,
+    # so refresh rotation looked broken in the full suite though the feature
+    # was fine. An explicit override is deterministic regardless of test order.
+    settings = get_settings().model_copy(
+        update={"rate_limit_enabled": False, "refresh_cookie_secure": False}
+    )
     transport = httpx.ASGITransport(app=create_app(settings))
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
         yield c

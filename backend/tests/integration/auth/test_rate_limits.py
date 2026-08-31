@@ -21,8 +21,7 @@ pytestmark = pytest.mark.skipif(not os.getenv("DATABASE_URL"), reason="DATABASE_
 
 
 @pytest.fixture
-async def limited_client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncClient]:
-    monkeypatch.setenv("REFRESH_COOKIE_SECURE", "false")
+async def limited_client() -> AsyncIterator[httpx.AsyncClient]:
     from app.core.config import get_settings
     from app.main import create_app
 
@@ -32,7 +31,12 @@ async def limited_client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx
         await client.delete(*keys)
     await client.aclose()
 
-    settings = get_settings().model_copy(update={"rate_limit_enabled": True})
+    # See `tests/integration/conftest.py`'s `client` fixture: `refresh_cookie_secure`
+    # must be an explicit override here too, not an env-var monkeypatch — `get_settings()`
+    # is process-wide cached, and this fixture cannot assume it is the first caller.
+    settings = get_settings().model_copy(
+        update={"rate_limit_enabled": True, "refresh_cookie_secure": False}
+    )
     transport = httpx.ASGITransport(app=create_app(settings))
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
         yield c
