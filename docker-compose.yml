@@ -5,6 +5,9 @@ x-backend-environment: &backend-environment
   DEBUG: "true"
   REFRESH_COOKIE_SECURE: "false"
   JWT_SECRET_KEY: ${JWT_SECRET_KEY:-development-only-secret-change-me-1234567890}
+  # Dev-only default. Must be a valid Fernet key (32 url-safe base64 bytes) —
+  # generate a real one for any non-local environment, never reuse this.
+  FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:-NnxfjGzrhIft6hYs51IFZkuAcX7A6mr67TfxR7Xu76c=}
   DATABASE_URL: postgresql+asyncpg://${POSTGRES_APP_USER:-nexora_app}:${POSTGRES_APP_PASSWORD:-nexora_app_pw}@postgres:5432/${POSTGRES_DB:-nexora}
   DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_APP_USER:-nexora_app}:${POSTGRES_APP_PASSWORD:-nexora_app_pw}@postgres:5432/${POSTGRES_DB:-nexora}
   DATABASE_OWNER_URL: postgresql+psycopg://${POSTGRES_USER:-nexora_owner}:${POSTGRES_PASSWORD:-nexora_owner_pw}@postgres:5432/${POSTGRES_DB:-nexora}

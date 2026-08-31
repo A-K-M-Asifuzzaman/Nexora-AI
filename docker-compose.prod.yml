@@ -1,0 +1,207 @@
+name: nexora
+
+# Standalone, not an override of docker-compose.yml: Compose concatenates
+# (rather than replaces) list-valued keys like `ports` across `-f` layers,
+# so an override file cannot reliably *remove* a published port — the one
+# thing this file exists to do differently. Duplicating the service
+# definitions keeps "what actually runs in production" auditable as one
+# file instead of two merged with surprising semantics.
+#
+# Every secret below is required with no fallback (`${VAR:?...}`) — a
+# missing one fails `docker compose up` immediately with a clear message,
+# not a silent dev-default running in production. See docs/DEPLOYMENT.md.
+
+x-backend-environment: &backend-environment
+  ENVIRONMENT: production
+  DEBUG: "false"
+  REFRESH_COOKIE_SECURE: "true"
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set (32+ bytes) — see docs/DEPLOYMENT.md}
+  FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY must be a Fernet key — see docs/DEPLOYMENT.md}
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_APP_USER:?POSTGRES_APP_USER must be set}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB must be set}
+  DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_APP_USER:?POSTGRES_APP_USER must be set}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB must be set}
+  DATABASE_OWNER_URL: postgresql+psycopg://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB must be set}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
+  CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/1
+  CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/2
+  CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set to your real frontend origin(s)}
+  SMTP_HOST: ${SMTP_HOST:?SMTP_HOST must point at a real relay in production — mailhog is dev-only}
+  SMTP_PORT: ${SMTP_PORT:?SMTP_PORT must be set}
+  SMTP_USER: ${SMTP_USER:?SMTP_USER must be set}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD must be set}
+  SMTP_TLS: ${SMTP_TLS:-true}
+  EMAIL_FROM: ${EMAIL_FROM:?EMAIL_FROM must be set}
+  # Everything below is optional in the same sense it is in docker-compose.yml
+  # — a deployment that has not configured AI/RAG simply runs without it.
+  LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  QDRANT_URL: http://qdrant:6333
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+  ANTIVIRUS_ENABLED: ${ANTIVIRUS_ENABLED:-false}
+  CLAMD_HOST: clamav
+  METRICS_ENABLED: "true"
+
+x-backend-dependencies: &backend-dependencies
+  postgres:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:?POSTGRES_APP_USER must be set}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD must be set}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    # Not published: only containers on this compose network reach Postgres.
+    # `docs/DEPLOYMENT.md` covers `pg_dump`/`pg_restore` via `docker compose exec`.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"]
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  migrate:
+    build: {context: ./backend}
+    environment: *backend-environment
+    depends_on: *backend-dependencies
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  backend:
+    build: {context: ./backend}
+    environment: *backend-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  worker:
+    build: {context: ./backend}
+    environment: *backend-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    command: ["celery", "-A", "app.workers.celery_app:celery", "worker", "--loglevel=INFO"]
+    restart: unless-stopped
+
+  # A singleton, not `worker -B` — see docker-compose.yml's comment on this
+  # service, unchanged in production: N worker replicas with -B gives N
+  # schedulers, and the schedule is meant to tick once.
+  beat:
+    build: {context: ./backend}
+    environment: *backend-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    command: ["celery", "-A", "app.workers.celery_app:celery", "beat", "--loglevel=INFO"]
+    restart: unless-stopped
+
+  frontend:
+    build: {context: ./frontend}
+    environment:
+      BACKEND_INTERNAL_URL: http://backend:8000
+      BFF_REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/3
+      BFF_SESSION_SECRET: ${BFF_SESSION_SECRET:?BFF_SESSION_SECRET must be set}
+      NEXT_PUBLIC_API_BASE_URL: /api/bff
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID must be set}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY must be set}
+    volumes: ["minio_data:/data"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.5
+    volumes: ["qdrant_data:/qdrant/storage"]
+    restart: unless-stopped
+
+  # Off by default (`ANTIVIRUS_ENABLED=false`, matching every optional
+  # integration in this project) — starts regardless, since `docker compose`
+  # does not conditionally start services on an env var, but it costs a
+  # small idle container until enabled, not an unscanned upload path if
+  # someone flips the flag without also adding this service.
+  clamav:
+    image: clamav/clamav:1.4
+    volumes: ["clamav_data:/var/lib/clamav"]
+    healthcheck:
+      test: ["CMD-SHELL", "echo PING | timeout 5 nc localhost 3310 | grep -q PONG"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s # The virus database download on first boot is slow.
+    restart: unless-stopped
+
+  # Reverse proxy: the only service with published ports. Terminates TLS
+  # (Caddy provisions and renews Let's Encrypt certificates automatically
+  # for the domain in `infra/caddy/Caddyfile`), adds HSTS — the one security
+  # header that belongs here rather than the app, since it is only honest
+  # once TLS is actually terminated — and fronts both `frontend` and the
+  # backend's `/api` + `/health` (see the Caddyfile for the exact split).
+  caddy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN must be set to the hostname pointed at this server}
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  qdrant_data:
+  clamav_data:
+  caddy_data:
+  caddy_config:

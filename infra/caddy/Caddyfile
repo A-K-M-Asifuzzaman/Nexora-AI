@@ -1,0 +1,28 @@
+{$DOMAIN} {
+	# HSTS: the one security header that belongs at this layer rather than
+	# the app (backend/frontend already set X-Content-Type-Options,
+	# X-Frame-Options, Referrer-Policy, and the frontend's own CSP) — HSTS is
+	# only honest once TLS is actually terminated, which happens here, not
+	# in a container that has no idea whether the edge in front of it is
+	# using HTTPS.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	# Backend health/readiness are safe to expose (SECURITY.md §3's public
+	# allowlist: liveness/readiness carry no data) and useful for an external
+	# uptime monitor. `/metrics` is deliberately NOT routed here — it stays
+	# reachable only inside the compose network, per SECURITY.md §11.
+	handle /health {
+		reverse_proxy backend:8000
+	}
+	handle /ready {
+		reverse_proxy backend:8000
+	}
+
+	# Everything else goes to the Next.js BFF, which is the only party that
+	# ever talks to the backend on the browser's behalf (ARCHITECTURE.md's
+	# BFF token-custody design) — the backend's own `/api/*` is not routed
+	# here at all, deliberately: nothing external calls it directly.
+	handle {
+		reverse_proxy frontend:3000
+	}
+}
