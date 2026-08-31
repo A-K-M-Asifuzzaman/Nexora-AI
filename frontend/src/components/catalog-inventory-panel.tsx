@@ -70,7 +70,7 @@ export function CatalogInventoryPanel() {
     event.preventDefault(); setBusy(true); const form = event.currentTarget; const data = new FormData(form);
     try {
       await api("products/", { method: "POST", body: JSON.stringify({ sku: data.get("sku"), name: data.get("name"), uom_id: data.get("uom_id"), selling_price: data.get("selling_price"), is_stock_tracked: true }) });
-      form.reset(); await load();
+      form.reset(); await load(); window.dispatchEvent(new Event("nexora:products-changed"));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Product creation failed."); } finally { setBusy(false); }
   }
 
