@@ -137,16 +137,21 @@ fabricate a log entry.
 
 ## 6. Rate Limiting
 
-Redis sliding window, keyed as in `API.md` §9. Notes:
+Redis sliding window (`app/core/ratelimit.py`), two independent call sites
+built on it:
 
-- Authenticated limits key on **membership**, not user or IP, so one tenant
-  cannot exhaust another's budget and a NAT'd office is not collectively
-  throttled.
-- Expensive endpoints (reports, AI, document upload) get their own tighter
-  buckets.
-- The limiter **fails closed for auth endpoints** and **open for read
-  endpoints** if Redis is unavailable: a Redis outage must not open a brute-force
-  window, but it also must not take down the whole product.
+- **Unauthenticated surface** — `app/modules/auth/ratelimit.py`, keyed by
+  `(IP, email)` and by IP alone (`API.md` §9: login, register, forgot-password,
+  refresh, the MFA challenge). **Fails closed**: a Redis outage must not open
+  a brute-force window.
+- **Authenticated, expensive endpoints** — `app/api/ratelimit.py`, keyed on
+  **membership**, not user or IP, so one tenant cannot exhaust another's
+  budget and a NAT'd office is not collectively throttled. Applied to the AI
+  copilot (`/ai/ask`), document upload, document search, and every report
+  endpoint. **Fails open**: a Redis outage must not take down reporting or
+  the copilot for every authenticated user over one dependency's blip — the
+  cost these limits bound (LLM spend, storage) is real but not the kind of
+  risk that justifies an outage of its own.
 
 ---
 
@@ -258,16 +263,17 @@ and never at `INFO` in bulk.
 
 Tracked, not hidden. Each has a phase.
 
-| Gap | Risk | Planned |
+| Gap | Risk | Status |
 |---|---|---|
-| No MFA/TOTP | Account takeover on password compromise | Phase 11 |
-| Audit trail not hash-chained | A DB-level attacker could alter history | Phase 11 (ADR-0016) |
-| No field-level encryption at rest | DB compromise exposes PII | Phase 11 evaluation |
-| Virus scanning is an interface, not wired | Malware could be stored and re-downloaded | Phase 9 |
+| No MFA/TOTP | Account takeover on password compromise | **Closed, Phase 11** — TOTP + recovery codes, `app/modules/auth/mfa*.py` |
+| Audit trail not hash-chained | A DB-level attacker could alter history | **Closed, Phase 11** (ADR-0016) — `app/modules/audit/chain.py`, migration 0024 |
+| No field-level encryption at rest | DB compromise exposes PII | **Evaluated and applied narrowly, Phase 11** — `app/core/field_encryption.py` (Fernet), applied to the MFA TOTP secret; not a blanket policy — see that module's docstring for why |
+| Virus scanning is an interface, not wired | Malware could be stored and re-downloaded | **Closed, Phase 11** — `ClamdScanner` wired into indexing behind `ANTIVIRUS_ENABLED`; off by default, same posture as every optional integration here |
+| Rate limiting narrower than documented | Unbounded AI/upload/report cost per tenant | **Closed, Phase 11** — `app/api/ratelimit.py`, membership-keyed, fails open (unlike auth's fail-closed) |
 | Single-currency assumption | Multi-currency tenants unsupported | Post-v1 |
-| No WAF / bot management | Automated abuse | Deployment-layer, Phase 12 |
+| No WAF / bot management | Automated abuse | Deployment-layer — `docs/DEPLOYMENT.md` §8 names it explicitly as an operator choice (e.g. Cloudflare in front of the host), not something the compose file provides |
 | Access-token revocation lags ≤15 min | Narrow window after logout/role change | Accepted (ADR-0007) |
-| No penetration test | Unknown unknowns | Pre-production |
+| No penetration test | Unknown unknowns | Pre-production — needs an external service, not something a coding pass can close |
 
 **Nexora AI does not claim NBR or Bangladesh regulatory compliance**, nor PCI-DSS
 compliance. Card payments are recorded as *references to* externally-processed

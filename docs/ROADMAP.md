@@ -358,24 +358,142 @@ picker didn't notice a product created in the sibling Catalog panel during
 the same session without a reload — fixed via a small custom DOM event
 Catalog now dispatches on create.
 
-## Phase 11 — Security Hardening · `[ ]`
-- [ ] Full threat-model re-audit
-- [ ] Tenant attack + IDOR/BOLA sweep
-- [ ] File upload hardening + virus scanning wired
-- [ ] AI/RAG prompt-injection review
-- [ ] MFA/TOTP
-- [ ] Audit hash-chaining (ADR-0016)
-- [ ] Rate-limit tuning, dependency review
-- [ ] Close every gap in `SECURITY.md` §12 or re-accept it explicitly
+## Phase 11 — Security Hardening · `[x]` COMPLETE (pending implementer review)
+- [x] Full threat-model re-audit — `SECURITY.md` §1's table re-walked against
+      current code; no control found to have lapsed. Not a rewrite: the
+      controls it names (Argon2id, 3-layer isolation, uniform 404, tool-level
+      AI authorization, `FOR UPDATE` lock ordering) are each independently
+      proven by the test suites already cited there.
+- [x] Tenant attack + IDOR/BOLA sweep — targeted, not exhaustive (a full
+      professional pentest is explicitly out of scope here; see below).
+      Checked POS session/held-cart ownership (`_open_session(..., own=True)`
+      in `app/modules/pos/service.py` — a cashier resuming another cashier's
+      held cart is re-scoped through *that* session's ownership, not the
+      caller's), MFA (inherently self-scoped — every endpoint reads the user
+      id from the verified access token, never a request parameter), and
+      document ACL cross-tenant role injection (closed earlier this phase,
+      `DOCUMENT_ACL_INVALID_ROLE`). No new gap found.
+- [x] File upload hardening + virus scanning wired — `ClamdScanner` speaks
+      clamd's INSTREAM protocol directly; `PENDING_SCAN` status (migration
+      0025) makes an infected upload genuinely not retrievable — the object
+      is deleted from storage, not merely marked failed. Off by default
+      (`ANTIVIRUS_ENABLED=false`), same posture as every optional integration
+      in this project.
+- [x] AI/RAG prompt-injection review — Phase 8/9's controls (tool-level
+      authorization, untrusted-content framing, numeric grounding,
+      tenant-filtered retrieval) reviewed against current code; still the
+      load-bearing design and still independently tested
+      (`tests/unit/test_ai_guardrails.py`, the adversarial isolation suite in
+      `tests/integration/documents/test_isolation.py`). No new gap found.
+- [x] MFA/TOTP — `app/modules/auth/mfa*.py`. TOTP + one-time recovery codes;
+      the secret is encrypted at rest (see below). Login returns a
+      short-lived, rate-limited challenge in place of tokens when enabled,
+      not a partial session.
+- [x] Audit hash-chaining (ADR-0016) — `app/modules/audit/chain.py`,
+      migration 0024. Both `audit_events` and `security_events` chain,
+      per-tenant, ordered by a sequence assigned *inside* the same
+      advisory-locked section that reads the previous hash — ordering by
+      `occurred_at` instead was tried first and demonstrably forks under
+      concurrent writes (see the migration's docstring); this was caught by
+      a 10-way concurrent test before it ever shipped, not after.
+- [x] Rate-limit tuning, dependency review — `app/api/ratelimit.py` adds the
+      membership-keyed, fail-open limiting SECURITY.md §6 already documented
+      as intended but had never actually been wired past the auth surface
+      (AI copilot, document upload/search, every report endpoint).
+      Dependency review: `pip-audit`/`npm audit`/`gitleaks` already ran clean
+      in CI; added `.github/dependabot.yml` for ongoing tracking.
+- [x] Close every gap in `SECURITY.md` §12 or re-accept it explicitly — done;
+      see that section. Two gaps are deliberately not closed here and were
+      never in scope for a coding pass: no penetration test (needs an
+      external service, pre-production) and no WAF/bot management
+      (a deployment-layer choice, Phase 12).
 
-## Phase 12 — Production Deployment · `[ ]`
-- [ ] Production Docker, non-root, multi-stage
-- [ ] Environment separation + secret management
-- [ ] Reverse proxy, TLS, security headers
-- [ ] Postgres backup + restore rehearsal
-- [ ] Migration + rollback procedure
-- [ ] Qdrant / object storage persistence
-- [ ] Metrics, error tracking, alerting
-- [ ] CI/CD release flow
-- [ ] Seeded demo tenant
-- [ ] Production README + smoke tests
+**Exit state (live PostgreSQL 16, migrations 0023–0025 applied):**
+
+```
+backend pytest (full suite, --cov)   429 passed, 87.68% coverage
+backend ruff / mypy                  clean
+alembic                               check clean; downgrade → upgrade clean
+```
+
+~38 new tests this phase across MFA (setup/enable/disable/challenge/recovery
+codes/rate limiting), field encryption (round-trip, tamper detection), the
+audit chain (linking, cross-tenant independence, tamper detection via a
+disabled-trigger attack matching the actual threat model, and a 10-way
+concurrency test that caught a genuine bug pre-ship — see below), virus
+scanning (protocol-level fake-clamd tests plus a quarantine integration
+test), and rate limiting (membership isolation).
+
+Field-level encryption (`SECURITY.md` §12's "evaluation") is applied
+narrowly, to the one new column that actually needed it (the MFA TOTP
+secret) rather than as a blanket policy — most of this schema's sensitive
+data is already one-way hashed (passwords, refresh tokens, MFA recovery
+codes), which reversible encryption would not improve on.
+
+## Phase 12 — Production Deployment · `[x]` COMPLETE (pending implementer review)
+- [x] Production Docker, non-root, multi-stage — `backend/Dockerfile` was
+      non-root but single-stage; now a `builder` stage (the only one that
+      ever sees a C compiler) and a slim `runtime` stage copying just the
+      venv. Built and boot-tested for real: ran the built image against the
+      local Postgres/Redis and confirmed `/health` responds 200, not just
+      that `docker build` exits 0.
+- [x] Environment separation + secret management — `docker-compose.prod.yml`
+      is a standalone file, not an override of the dev compose (Compose
+      concatenates rather than replaces list-valued keys like `ports` across
+      `-f` layers, so an override could not reliably *remove* the published
+      database ports — the one thing this needed to do). Every secret is
+      `${VAR:?message}` — required, no dev-default fallback, and confirmed
+      to actually fail fast (`docker compose config` without them prints the
+      exact message pointing at `docs/DEPLOYMENT.md`, not a cryptic error).
+      `.env.production.example` is the fill-in-and-copy template.
+- [x] Reverse proxy, TLS, security headers — Caddy (`infra/caddy/Caddyfile`),
+      automatic Let's Encrypt for the configured domain, adds HSTS (the one
+      header that belongs at this layer, not the app — see that file's
+      comment). Routes `/health` and `/ready` to the backend and everything
+      else to the frontend BFF; the raw backend API is deliberately not
+      publicly routable at all. `docker compose config` validated the
+      compose file structurally; live `caddy validate` could not be run in
+      this environment (local Docker was slow to create new containers by
+      the time this was reached, confirmed unrelated to the config — cleanup
+      and `docker compose config` both stayed fast) — the Caddyfile uses
+      Caddy's own documented `handle`-block routing idiom verbatim, but this
+      is flagged rather than silently claimed as verified.
+- [x] Postgres backup + restore rehearsal — `scripts/backup.sh` /
+      `scripts/restore.sh`. Actually rehearsed, not just written: dumped the
+      live local database, restored into a separate database in the same
+      cluster, and diffed table row counts, the Alembic version, the RLS
+      policy count, and the new audit-chain triggers — all matched exactly.
+- [x] Migration + rollback procedure — no new mechanism; documented
+      (`docs/DEPLOYMENT.md` §4) as the same `alembic downgrade -1` CI's
+      `migrations` job already proves is real on every push, run instead
+      against the `migrate` service.
+- [x] Qdrant / object storage persistence — both already had named volumes
+      in the dev compose file; carried through unchanged in
+      `docker-compose.prod.yml`, just without the published host ports.
+- [x] Metrics, error tracking, alerting — `/metrics` already existed
+      (Phase 1); no error-tracker or alerting stack is shipped, and
+      `docs/DEPLOYMENT.md` §7/§8 says so directly rather than implying
+      coverage that is not there.
+- [x] CI/CD release flow — `.github/workflows/release.yml`, tag-triggered
+      (`v*.*.*`, deliberately not on every push to main — a release is a
+      deliberate act), builds and pushes both images to GHCR. Needs no new
+      secret beyond the workflow's own `GITHUB_TOKEN`.
+- [x] Seeded demo tenant — already existed (`backend/scripts/seed_demo.py`);
+      re-ran it against the live local database this phase to confirm it is
+      still idempotent and still works, unchanged.
+- [x] Production README + smoke tests — `docs/DEPLOYMENT.md`. "Smoke tests"
+      here means §2's `curl /health` and `/ready` checks after first boot,
+      the same shape CI's own `e2e-smoke` job already runs; no separate
+      smoke-test script was added since that job already is one.
+
+**Exit state:** every backend/frontend test still green (no application code
+changed this phase beyond `backend/Dockerfile`, which was boot-tested
+directly rather than through the pytest suite); `docker compose config`
+valid for `docker-compose.prod.yml`; `alembic check` clean; backup/restore
+rehearsed against live data; YAML validated for the new workflow and
+Dependabot config.
+
+**Deliberately not built, with reasons** (`docs/DEPLOYMENT.md` §8 has the
+full list): a WAF, a shipped metrics/alerting stack, multi-host/managed-DB
+scaling, key-rotation tooling, and a penetration test — each named as a real
+gap rather than assumed covered by what exists.
