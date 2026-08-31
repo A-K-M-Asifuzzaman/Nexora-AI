@@ -132,15 +132,21 @@ async def add_note(payload: NoteCreate, context: Manage, session: Db) -> NoteRes
     return NoteResponse.model_validate(await CrmService(session, context).add_note(payload))
 
 
-@router.get("/notes/", response_model=list[NoteResponse])
+@router.get("/notes/", response_model=Page[NoteResponse])
 async def notes(
     context: Read,
     session: Db,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 25,
     lead_id: UUID | None = None,
     opportunity_id: UUID | None = None,
     customer_id: UUID | None = None,
-) -> list[NoteResponse]:
-    rows = await CrmService(session, context).notes_for(
-        lead_id=lead_id, opportunity_id=opportunity_id, customer_id=customer_id
+) -> Page[NoteResponse]:
+    items, total = await CrmService(session, context).notes_for(
+        page=page,
+        page_size=page_size,
+        lead_id=lead_id,
+        opportunity_id=opportunity_id,
+        customer_id=customer_id,
     )
-    return [NoteResponse.model_validate(row) for row in rows]
+    return _page(items, total, page, page_size, NoteResponse)

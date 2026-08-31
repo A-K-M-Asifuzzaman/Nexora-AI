@@ -324,13 +324,22 @@ class CrmService:
             self.audit.record(self.context, events.NOTE_ADDED, "crm_note", note.id)
             return note
 
-    async def notes_for(self, **parent: UUID | None) -> list[CrmNote]:
+    async def notes_for(
+        self, *, page: int, page_size: int, **parent: UUID | None
+    ) -> tuple[list[CrmNote], int]:
         async with service_transaction(self.session):
             await self._set_tenant()
             filters = [getattr(CrmNote, key) == value for key, value in parent.items() if value]
             if not filters:
                 raise DomainValidationError("PARENT_REQUIRED", "Name the record to read notes for.")
+            total = (
+                await self.session.scalar(select(func.count()).select_from(CrmNote).where(*filters))
+            ) or 0
             rows = await self.session.scalars(
-                select(CrmNote).where(*filters).order_by(CrmNote.created_at.desc())
+                select(CrmNote)
+                .where(*filters)
+                .order_by(CrmNote.created_at.desc(), CrmNote.id)
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )
-            return list(rows)
+            return list(rows), total

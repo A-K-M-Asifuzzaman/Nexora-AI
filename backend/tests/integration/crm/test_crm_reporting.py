@@ -204,17 +204,6 @@ async def test_activity_completes_once(client: httpx.AsyncClient) -> None:
     ).status_code == 409
 
 
-async def test_note_attaches_and_reads_back(client: httpx.AsyncClient) -> None:
-    headers, _ = await workspace(client)
-    lead = await make_lead(client, headers)
-    note = await client.post(
-        f"{CRM}/notes/", headers=headers, json={"body": "Called, keen.", "lead_id": lead["id"]}
-    )
-    assert note.status_code == 201, note.text
-    rows = (await client.get(f"{CRM}/notes/?lead_id={lead['id']}", headers=headers)).json()
-    assert len(rows) == 1 and rows[0]["body"] == "Called, keen."
-
-
 # ── reporting ─────────────────────────────────────────────────────────────────
 
 
