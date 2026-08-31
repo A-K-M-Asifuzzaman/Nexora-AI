@@ -147,7 +147,11 @@ jobs:
   security:
     runs-on: ubuntu-latest
     steps:
+      # gitleaks needs real history to diff-scan a push: a shallow (depth-1)
+      # checkout only has the latest commit, so it cannot resolve the parent
+      # of the oldest commit whenever a push carries more than one.
       - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
       - uses: actions/setup-python@v5
         with: {python-version: "3.12", cache: pip}
       - uses: actions/setup-node@v4
