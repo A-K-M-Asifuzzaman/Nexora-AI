@@ -340,8 +340,15 @@ Not built: `CASHIER_VOID_RATE` detects on `sales.status = 'VOIDED'`, and
 POS has no operation that ever sets it — voiding a sale is a real, separate
 feature outside this phase's scope. The detector and its test are correct
 against the schema and will fire the moment that status becomes reachable.
-No frontend surface yet (forecast chart, alert inbox) — backend and API
-only in this pass.
+
+**Frontend added in a follow-up pass:** `InsightsPanel` (forecast chart +
+uncertainty table + backtest scores; anomaly alert inbox with redaction,
+acknowledge/dismiss, manual run) wired into the workspace nav. Browser-
+verified end to end (register → org → catalog → forecast → alerts, desktop
+and mobile). One bug found and fixed in that pass: the forecast product
+picker didn't notice a product created in the sibling Catalog panel during
+the same session without a reload — fixed via a small custom DOM event
+Catalog now dispatches on create.
 
 ## Phase 11 — Security Hardening · `[ ]`
 - [ ] Full threat-model re-audit
