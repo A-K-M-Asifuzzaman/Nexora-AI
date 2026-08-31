@@ -123,29 +123,45 @@ through the database. No Python import cycle exists, so the AST guard cannot see
 it — but it is real, and it caused a runtime failure before `import_all_models()`
 was wired into `create_app`.
 
-## Phase 4 — POS · `[ ]`
-- [ ] Terminals, sessions (open/close, cash reconciliation)
-- [ ] Barcode + fast search, cart, discounts, VAT
-- [ ] Cash / card / mobile / split payment
-- [ ] Idempotent, atomic checkout
-- [ ] Receipt, hold/resume
-- [ ] Returns, full and partial refunds
-- [ ] Keyboard-first UI
-- [ ] Rollback, duplicate-key, concurrent-final-item tests
+## Phase 4 — POS · `[x]` COMPLETE (pending implementer review)
+- [x] Terminals, sessions (open/close, cash reconciliation)
+- [x] Barcode + fast search, cart, discounts, VAT
+- [x] Cash / card / mobile / split payment
+- [x] Idempotent, atomic checkout
+- [x] Receipt, hold/resume
+- [x] Returns, full and partial refunds
+- [x] Keyboard-first UI
+- [x] Rollback, duplicate-key, concurrent-final-item tests
+
+**Note:** built alongside Phase 5 in the same pass and never given its own
+roadmap update at the time — this entry was backfilled after the fact, not
+re-verified against a fresh exit-state run. Real journal postings and VAT
+register wiring for POS checkout/refund were added later, in the Phase 9/10
+hardening pass (see `_post_sale`/`_record_vat_for_sale` in
+`app/modules/pos/service.py`).
 
 ## Phase 5 — Accounting · `[x]` COMPLETE (pending implementer review)
-- [ ] Chart of Accounts + system accounts seeded per tenant
-- [ ] Journals, entries, lines, DB-enforced balance
-- [ ] Posted-entry immutability triggers
-- [ ] Fiscal periods with exclusion constraint
-- [ ] Reversals
-- [ ] Payment allocation, AR/AP control accounts
-- [ ] Weighted average cost + COGS
-- [ ] General Ledger, Trial Balance, P&L, Balance Sheet, AR/AP Aging
-- [ ] Posting integration for sales, purchases, POS
+- [x] Chart of Accounts + system accounts seeded per tenant
+- [x] Journals, entries, lines, DB-enforced balance
+- [x] Posted-entry immutability triggers
+- [x] Fiscal periods with exclusion constraint
+- [x] Reversals
+- [x] Payment allocation, AR/AP control accounts
+- [x] Weighted average cost + COGS
+- [x] General Ledger, Trial Balance, P&L, Balance Sheet, AR/AP Aging
+- [x] Posting integration for sales, purchases, POS
 - [x] 22-case accounting test matrix (`ACCOUNTING.md` §10)
 
-**Exit state (live PostgreSQL 16.14, migration `0017` applied):**
+**Note:** posting integration was checked off at the time this phase was
+first closed, but the wiring was incomplete — POS checkout/refund, sales
+fulfillment/invoice/payment, and purchase receipt/bill/payment could all
+reach "completed" status without ever posting a journal entry. Found and
+fixed in the Phase 9/10 hardening pass (commit `c0859a6`), proven with 7
+new integration tests asserting real trial-balance effects rather than
+document status. See `AGENT_HANDOFF.md`.
+
+**Exit state (live PostgreSQL 16.14, migration `0017` applied — pre-dates
+the posting-integration fix above):**
 
 ```
 make verify     lint + typecheck + test + build, all green
