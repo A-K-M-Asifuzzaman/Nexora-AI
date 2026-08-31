@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from typing import cast
 from uuid import UUID
@@ -12,6 +13,7 @@ from app.modules.purchasing.models import (
     SupplierBill,
     SupplierBillLine,
 )
+from app.modules.sales.money import round_money
 
 
 class PurchasingRepository:
@@ -140,3 +142,46 @@ class PurchasingRepository:
             },
         )
         return [(row[0], row[1], row[2], row[3]) for row in rows]
+
+    async def ap_aging(
+        self, as_of: date, branch_ids: frozenset[UUID] | None
+    ) -> list[tuple[UUID, str, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal]]:
+        """ACCOUNTING.md §8: current, 1-30, 31-60, 61-90, 90+, bucketed by
+        `as_of - due_date`. A null due date can never be overdue, so it is
+        always current — the same bills `payables()` already counts, aged
+        rather than only totalled."""
+        rows = await self.session.execute(
+            text("""
+                WITH outstanding AS (
+                    SELECT b.supplier_id, b.due_date, b.total_amount - b.paid_amount AS balance
+                      FROM supplier_bills b
+                     WHERE b.status IN ('ISSUED', 'PARTIALLY_PAID', 'PAID')
+                       AND (:unrestricted OR b.branch_id = ANY(CAST(:branch_ids AS uuid[])))
+                )
+                SELECT s.id, s.name,
+                       COALESCE(SUM(o.balance) FILTER (
+                           WHERE o.due_date IS NULL OR o.due_date >= :as_of), 0) AS current,
+                       COALESCE(SUM(o.balance) FILTER (
+                           WHERE (:as_of - o.due_date) BETWEEN 1 AND 30), 0) AS d1_30,
+                       COALESCE(SUM(o.balance) FILTER (
+                           WHERE (:as_of - o.due_date) BETWEEN 31 AND 60), 0) AS d31_60,
+                       COALESCE(SUM(o.balance) FILTER (
+                           WHERE (:as_of - o.due_date) BETWEEN 61 AND 90), 0) AS d61_90,
+                       COALESCE(SUM(o.balance) FILTER (
+                           WHERE (:as_of - o.due_date) > 90), 0) AS d90_plus,
+                       COALESCE(SUM(o.balance), 0) AS total
+                  FROM suppliers s
+                  JOIN outstanding o ON o.supplier_id = s.id
+                 GROUP BY s.id, s.name
+                HAVING COALESCE(SUM(o.balance), 0) <> 0
+                 ORDER BY s.name
+            """),
+            {
+                "as_of": as_of,
+                "unrestricted": branch_ids is None,
+                "branch_ids": list(branch_ids or ()),
+            },
+        )
+        return [
+            (row[0], row[1], *(round_money(Decimal(bucket)) for bucket in row[2:])) for row in rows
+        ]

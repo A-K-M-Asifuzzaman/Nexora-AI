@@ -281,6 +281,56 @@ async def test_partial_payment_moves_status_and_receivables(client: httpx.AsyncC
     assert receivables["total_outstanding"] == "200.0000"
 
 
+async def test_ar_aging_buckets_an_overdue_invoice_by_days_past_due(
+    client: httpx.AsyncClient,
+) -> None:
+    headers, ids = await workspace(client)
+    order = await make_order(client, headers, ids, quantity="3")
+    await client.post(f"/api/v1/sales/orders/{order['id']}/confirm", headers=headers)
+    await client.post(f"/api/v1/sales/orders/{order['id']}/fulfillments", headers=headers, json={})
+    invoice = (
+        await client.post(
+            "/api/v1/sales/invoices/",
+            headers=headers,
+            json={
+                "sales_order_id": order["id"],
+                "issue_date": "2026-07-01",
+                "due_date": "2026-07-15",
+            },
+        )
+    ).json()
+    await client.post(
+        f"/api/v1/sales/invoices/{invoice['id']}/issue",
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
+
+    # 2026-08-31 - 2026-07-15 = 47 days overdue -> the 31-60 bucket.
+    response = await client.get("/api/v1/sales/reports/ar-aging?as_of=2026-08-31", headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["items"]) == 1
+    row = body["items"][0]
+    assert row["customer_name"] == "Acme"
+    assert row["days_31_60"] == "345.0000"
+    assert row["current"] == "0.0000"
+    assert row["days_1_30"] == "0.0000"
+    assert row["days_61_90"] == "0.0000"
+    assert row["days_90_plus"] == "0.0000"
+    assert row["total"] == "345.0000"
+    assert body["total_outstanding"] == "345.0000"
+
+
+async def test_ar_aging_treats_a_not_yet_due_invoice_as_current(client: httpx.AsyncClient) -> None:
+    headers, ids = await workspace(client)
+    invoice = await _issued_invoice(client, headers, ids)  # no due_date set
+
+    response = await client.get("/api/v1/sales/reports/ar-aging?as_of=2026-08-31", headers=headers)
+    body = response.json()
+    row = next(item for item in body["items"] if item["customer_id"] == ids["customer_id"])
+    assert row["current"] == invoice["total_amount"]
+    assert row["days_1_30"] == "0.0000"
+
+
 async def test_full_payment_marks_the_invoice_paid(client: httpx.AsyncClient) -> None:
     headers, ids = await workspace(client)
     invoice = await _issued_invoice(client, headers, ids)

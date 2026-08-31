@@ -421,8 +421,131 @@ class AccountingService:
             )
             return reversal
 
-    async def trial_balance(self, start: date, end: date) -> list[tuple[Account, object, object]]:
+    async def trial_balance(self, start: date, end: date) -> list[tuple[Account, Decimal, Decimal]]:
         async with service_transaction(self.session):
             await self._set_tenant()
             await self._bootstrap()
             return await self.repository.trial_balance(start, end)
+
+    async def profit_and_loss(
+        self, start: date, end: date
+    ) -> tuple[list[tuple[Account, Decimal]], list[tuple[Account, Decimal]]]:
+        """ACCOUNTING.md §8. Revenue's normal balance is credit, expense's is
+        debit — each account's amount is its movement on that normal side,
+        net of the other, so a revenue contra (e.g. Sales Returns) reduces
+        revenue rather than appearing as its own negative expense."""
+        async with service_transaction(self.session):
+            await self._set_tenant()
+            await self._bootstrap()
+            rows = await self.repository.trial_balance(start, end)
+        revenue = [
+            (account, credit - debit)
+            for account, debit, credit in rows
+            if account.account_type == AccountType.REVENUE
+        ]
+        expense = [
+            (account, debit - credit)
+            for account, debit, credit in rows
+            if account.account_type == AccountType.EXPENSE
+        ]
+        return revenue, expense
+
+    async def balance_sheet(
+        self, as_of: date
+    ) -> tuple[
+        list[tuple[Account, Decimal]],
+        list[tuple[Account, Decimal]],
+        list[tuple[Account, Decimal]],
+        Decimal,
+    ]:
+        """ACCOUNTING.md §5 & §8. Asset/liability/equity balances are
+        cumulative since inception — a balance sheet is a point-in-time
+        snapshot, not a period movement. Revenue and expense are not closed
+        automatically (§5: closing is "a normal, reversible journal entry",
+        posted deliberately at year-end, not implied by a report), so this
+        also returns the current fiscal year's unclosed net income —
+        needed for the sheet to balance before that close has happened.
+        """
+        async with service_transaction(self.session):
+            await self._set_tenant()
+            await self._bootstrap()
+            period = await self.repository.period_for_date(as_of)
+            cumulative = await self.repository.trial_balance(date(1970, 1, 1), as_of)
+            earnings_rows = (
+                await self.repository.trial_balance(period.start_date, as_of)
+                if period is not None
+                else []
+            )
+        assets = [
+            (account, debit - credit)
+            for account, debit, credit in cumulative
+            if account.account_type == AccountType.ASSET
+        ]
+        liabilities = [
+            (account, credit - debit)
+            for account, debit, credit in cumulative
+            if account.account_type == AccountType.LIABILITY
+        ]
+        equity = [
+            (account, credit - debit)
+            for account, debit, credit in cumulative
+            if account.account_type == AccountType.EQUITY
+        ]
+        period_revenue = sum(
+            (
+                credit - debit
+                for account, debit, credit in earnings_rows
+                if account.account_type == AccountType.REVENUE
+            ),
+            ZERO,
+        )
+        period_expense = sum(
+            (
+                debit - credit
+                for account, debit, credit in earnings_rows
+                if account.account_type == AccountType.EXPENSE
+            ),
+            ZERO,
+        )
+        current_year_earnings = period_revenue - period_expense
+        return assets, liabilities, equity, current_year_earnings
+
+    async def general_ledger(
+        self, account_id: UUID, start: date, end: date
+    ) -> tuple[
+        Account, Decimal, list[tuple[UUID, str, date, str | None, Decimal, Decimal, Decimal]]
+    ]:
+        async with service_transaction(self.session):
+            await self._set_tenant()
+            await self._bootstrap()
+            account = await self.repository.account(account_id)
+            if account is None:
+                raise NotFoundError()
+            opening = await self.repository.general_ledger_opening_balance(account_id, start)
+            lines = await self.repository.general_ledger_lines(
+                account_id, start, end, opening=opening
+            )
+            # The repository computes every running balance debit-positive
+            # (debit minus credit). Liability/equity/revenue accounts carry
+            # their normal balance on the credit side, so this account's
+            # figures are shown in its own natural sign, not that raw one —
+            # a liability GL should read positive as the liability grows.
+            sign = (
+                -1
+                if account.account_type
+                in (AccountType.LIABILITY, AccountType.EQUITY, AccountType.REVENUE)
+                else 1
+            )
+
+            def signed(value: Decimal) -> Decimal:
+                # `sign * Decimal("0")` produces a signed zero ("-0"), which
+                # is arithmetically fine but reads as a bug in a report.
+                result = sign * value
+                return abs(result) if result == ZERO else result
+
+            opening = signed(opening)
+            lines = [
+                (line_id, entry_number, entry_date, description, debit, credit, signed(running))
+                for line_id, entry_number, entry_date, description, debit, credit, running in lines
+            ]
+            return account, opening, lines

@@ -266,6 +266,60 @@ async def test_partial_payment_moves_status_and_payables(client: httpx.AsyncClie
     assert payables["total_outstanding"] == "200.0000"
 
 
+async def test_ap_aging_buckets_an_overdue_bill_by_days_past_due(client: httpx.AsyncClient) -> None:
+    headers, ids = await workspace(client)
+    order = await _received_order(client, headers, ids)
+    bill = (
+        await client.post(
+            "/api/v1/purchases/bills/",
+            headers=headers,
+            json={
+                "purchase_order_id": order["id"],
+                "issue_date": "2026-07-01",
+                "due_date": "2026-07-15",
+            },
+        )
+    ).json()
+    await client.post(f"/api/v1/purchases/bills/{bill['id']}/issue", headers=headers)
+
+    # 2026-08-31 - 2026-07-15 = 47 days overdue -> the 31-60 bucket.
+    response = await client.get(
+        "/api/v1/purchases/reports/ap-aging?as_of=2026-08-31", headers=headers
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["items"]) == 1
+    row = body["items"][0]
+    assert row["supplier_name"] == "Global Supply"
+    assert row["days_31_60"] == "440.0000"
+    assert row["current"] == "0.0000"
+    assert row["total"] == "440.0000"
+    assert body["total_outstanding"] == "440.0000"
+
+
+async def test_ap_aging_treats_a_not_yet_due_bill_as_current(client: httpx.AsyncClient) -> None:
+    headers, ids = await workspace(client)
+    order = await _received_order(client, headers, ids)
+    bill = (
+        await client.post(
+            "/api/v1/purchases/bills/",
+            headers=headers,
+            json={"purchase_order_id": order["id"], "issue_date": "2026-08-29"},
+        )
+    ).json()
+    issued = (
+        await client.post(f"/api/v1/purchases/bills/{bill['id']}/issue", headers=headers)
+    ).json()
+
+    response = await client.get(
+        "/api/v1/purchases/reports/ap-aging?as_of=2026-08-31", headers=headers
+    )
+    body = response.json()
+    row = next(item for item in body["items"] if item["supplier_id"] == ids["supplier_id"])
+    assert row["current"] == issued["total_amount"]
+    assert row["days_1_30"] == "0.0000"
+
+
 async def test_over_allocation_against_a_bill_is_rejected(client: httpx.AsyncClient) -> None:
     headers, ids = await workspace(client)
     order = await _received_order(client, headers, ids)

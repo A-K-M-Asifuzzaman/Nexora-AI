@@ -197,3 +197,20 @@ class PayableRow(_MoneyOut):
 class PayablesResponse(BaseModel):
     items: list[PayableRow]
     total_outstanding: str
+
+
+class ApAgingRow(_MoneyOut):
+    supplier_id: UUID
+    supplier_name: str
+    current: Decimal
+    days_1_30: Decimal
+    days_31_60: Decimal
+    days_61_90: Decimal
+    days_90_plus: Decimal
+    total: Decimal
+
+
+class ApAgingResponse(BaseModel):
+    as_of: date
+    items: list[ApAgingRow]
+    total_outstanding: str

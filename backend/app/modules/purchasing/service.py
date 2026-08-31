@@ -9,7 +9,7 @@ journal entry from `accounting.posting_rules` (ACCOUNTING.md §3.4-3.6),
 inside the same transaction as the operational write.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -588,3 +588,10 @@ class PurchasingService:
             rows = await self.repository.payables(self.context.branch_ids)
             outstanding = sum((row[2] - row[3] for row in rows), ZERO)
             return rows, outstanding
+
+    async def ap_aging(
+        self, as_of: date
+    ) -> list[tuple[UUID, str, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal]]:
+        async with service_transaction(self.session):
+            await self._set_tenant()
+            return await self.repository.ap_aging(as_of, self.context.branch_ids)

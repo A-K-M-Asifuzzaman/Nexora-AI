@@ -1,3 +1,5 @@
+from datetime import date
+from decimal import Decimal
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -10,6 +12,8 @@ from app.core.errors import DomainValidationError
 from app.core.pagination import Page
 from app.modules.rbac.permissions import Perm
 from app.modules.sales.schemas import (
+    AgingRow,
+    ArAgingResponse,
     CreditNoteCreate,
     CreditNoteResponse,
     FulfillmentCreate,
@@ -227,6 +231,31 @@ async def receivables(context: ReadContext, session: DbSession) -> ReceivablesRe
         ],
         total_outstanding=str(outstanding),
     )
+
+
+@router.get("/reports/ar-aging", response_model=ArAgingResponse)
+async def ar_aging(
+    context: ReadContext,
+    session: DbSession,
+    as_of: Annotated[date | None, Query()] = None,
+) -> ArAgingResponse:
+    as_of = as_of or date.today()
+    rows = await SalesService(session, context).ar_aging(as_of)
+    items = [
+        AgingRow(
+            customer_id=row[0],
+            customer_name=row[1],
+            current=row[2],
+            days_1_30=row[3],
+            days_31_60=row[4],
+            days_61_90=row[5],
+            days_90_plus=row[6],
+            total=row[7],
+        )
+        for row in rows
+    ]
+    total_outstanding = sum((item.total for item in items), Decimal("0"))
+    return ArAgingResponse(as_of=as_of, items=items, total_outstanding=str(total_outstanding))
 
 
 @router.get("/quotations/", response_model=Page[QuotationResponse])

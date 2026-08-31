@@ -1,3 +1,5 @@
+from datetime import date
+from decimal import Decimal
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -9,6 +11,8 @@ from app.core.context import TenantContext
 from app.core.errors import DomainValidationError
 from app.core.pagination import Page
 from app.modules.purchasing.schemas import (
+    ApAgingResponse,
+    ApAgingRow,
     GoodsReceiptCreate,
     GoodsReceiptResponse,
     PayableRow,
@@ -198,3 +202,28 @@ async def payables(context: ReadContext, session: DbSession) -> PayablesResponse
         ],
         total_outstanding=str(outstanding),
     )
+
+
+@router.get("/reports/ap-aging", response_model=ApAgingResponse)
+async def ap_aging(
+    context: ReadContext,
+    session: DbSession,
+    as_of: Annotated[date | None, Query()] = None,
+) -> ApAgingResponse:
+    as_of = as_of or date.today()
+    rows = await PurchasingService(session, context).ap_aging(as_of)
+    items = [
+        ApAgingRow(
+            supplier_id=row[0],
+            supplier_name=row[1],
+            current=row[2],
+            days_1_30=row[3],
+            days_31_60=row[4],
+            days_61_90=row[5],
+            days_90_plus=row[6],
+            total=row[7],
+        )
+        for row in rows
+    ]
+    total_outstanding = sum((item.total for item in items), Decimal("0"))
+    return ApAgingResponse(as_of=as_of, items=items, total_outstanding=str(total_outstanding))

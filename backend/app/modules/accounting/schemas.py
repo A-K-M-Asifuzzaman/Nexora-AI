@@ -127,3 +127,62 @@ class TrialBalanceResponse(MoneyOut):
     items: list[TrialBalanceRow]
     total_debit: Decimal
     total_credit: Decimal
+
+
+class ProfitAndLossRow(MoneyOut):
+    account_id: UUID
+    code: str
+    name: str
+    amount: Decimal
+
+
+class ProfitAndLossResponse(MoneyOut):
+    from_date: date
+    to_date: date
+    revenue: list[ProfitAndLossRow]
+    expense: list[ProfitAndLossRow]
+    total_revenue: Decimal
+    total_expense: Decimal
+    net_income: Decimal
+
+
+class BalanceSheetRow(MoneyOut):
+    account_id: UUID
+    code: str
+    name: str
+    balance: Decimal
+
+
+class BalanceSheetResponse(MoneyOut):
+    as_of: date
+    assets: list[BalanceSheetRow]
+    liabilities: list[BalanceSheetRow]
+    equity: list[BalanceSheetRow]
+    # Revenue and expense accounts stay open until an explicit year-end close
+    # (ACCOUNTING.md §5) posts them to Retained Earnings — until then this is
+    # the fiscal year's net income, unposted, shown so the sheet still balances.
+    current_year_earnings: Decimal
+    total_assets: Decimal
+    total_liabilities: Decimal
+    total_equity: Decimal
+
+
+class GeneralLedgerLine(MoneyOut):
+    line_id: UUID
+    entry_number: str
+    entry_date: date
+    description: str | None
+    debit: Decimal
+    credit: Decimal
+    running_balance: Decimal
+
+
+class GeneralLedgerResponse(MoneyOut):
+    account_id: UUID
+    code: str
+    name: str
+    from_date: date
+    to_date: date
+    opening_balance: Decimal
+    lines: list[GeneralLedgerLine]
+    closing_balance: Decimal

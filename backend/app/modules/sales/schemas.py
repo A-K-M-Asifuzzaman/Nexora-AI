@@ -244,6 +244,23 @@ class ReceivablesResponse(BaseModel):
     total_outstanding: str
 
 
+class AgingRow(_MoneyOut):
+    customer_id: UUID
+    customer_name: str
+    current: Decimal
+    days_1_30: Decimal
+    days_31_60: Decimal
+    days_61_90: Decimal
+    days_90_plus: Decimal
+    total: Decimal
+
+
+class ArAgingResponse(BaseModel):
+    as_of: date
+    items: list[AgingRow]
+    total_outstanding: str
+
+
 class QuotationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

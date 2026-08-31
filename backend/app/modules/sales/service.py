@@ -16,7 +16,7 @@ being fulfilled, so there is no single moment that is correctly "the sale"
 for both halves at once.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -966,3 +966,10 @@ class SalesService:
             rows = await self.repository.receivables(self.context.branch_ids)
             outstanding = sum((row[2] - row[3] for row in rows), ZERO)
             return rows, outstanding
+
+    async def ar_aging(
+        self, as_of: date
+    ) -> list[tuple[UUID, str, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal]]:
+        async with service_transaction(self.session):
+            await self._set_tenant()
+            return await self.repository.ar_aging(as_of, self.context.branch_ids)

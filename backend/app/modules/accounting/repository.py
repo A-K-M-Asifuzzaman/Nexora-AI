@@ -1,8 +1,9 @@
 from datetime import date
+from decimal import ROUND_HALF_UP, Decimal
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.accounting.models import (
@@ -13,6 +14,17 @@ from app.modules.accounting.models import (
     JournalEntryLine,
 )
 from app.modules.tenancy.models import Tenant
+
+# `COALESCE(SUM(x), 0)` and window-function arithmetic can hand back a
+# Decimal at a narrower scale than the NUMERIC(18,4) columns it was built
+# from (Postgres infers a bare `0` literal's scale independently of the
+# aggregate it's coalescing with) — quantize every reporting figure to the
+# storage scale so "no activity" reads "0.0000", not a bare "0".
+MONEY_SCALE = Decimal("0.0001")
+
+
+def _money(value: Decimal) -> Decimal:
+    return value.quantize(MONEY_SCALE, rounding=ROUND_HALF_UP)
 
 
 class AccountingRepository:
@@ -76,7 +88,7 @@ class AccountingRepository:
             )
         )
 
-    async def trial_balance(self, start: date, end: date) -> list[tuple[Account, object, object]]:
+    async def trial_balance(self, start: date, end: date) -> list[tuple[Account, Decimal, Decimal]]:
         rows = await self.session.execute(
             select(
                 Account,
@@ -89,4 +101,47 @@ class AccountingRepository:
             .group_by(Account.id)
             .order_by(Account.code)
         )
-        return [(row[0], row[1], row[2]) for row in rows]
+        return [(row[0], _money(Decimal(row[1])), _money(Decimal(row[2]))) for row in rows]
+
+    async def general_ledger_opening_balance(self, account_id: UUID, before: date) -> Decimal:
+        """Net debit-credit for this account strictly before `before` — the
+        starting point a running balance in the requested window builds on."""
+        value = await self.session.scalar(
+            text("""
+                SELECT COALESCE(SUM(jel.debit - jel.credit), 0)
+                  FROM journal_entry_lines jel
+                  JOIN journal_entries je ON je.id = jel.journal_entry_id
+                 WHERE jel.account_id = :account_id
+                   AND je.status = 'POSTED'
+                   AND je.entry_date < :before
+            """),
+            {"account_id": account_id, "before": before},
+        )
+        return _money(cast(Decimal, value))
+
+    async def general_ledger_lines(
+        self, account_id: UUID, start: date, end: date, *, opening: Decimal
+    ) -> list[tuple[UUID, str, date, str | None, Decimal, Decimal, Decimal]]:
+        """Lines for one account in a window, each carrying the running
+        balance through that line — computed by the database (ACCOUNTING.md
+        §8: "no report loads raw rows into Python to sum them")."""
+        rows = await self.session.execute(
+            text("""
+                SELECT jel.id, je.entry_number, je.entry_date,
+                       COALESCE(jel.description, je.description), jel.debit, jel.credit,
+                       :opening + SUM(jel.debit - jel.credit)
+                           OVER (ORDER BY je.entry_date, jel.id
+                                 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+                  FROM journal_entry_lines jel
+                  JOIN journal_entries je ON je.id = jel.journal_entry_id
+                 WHERE jel.account_id = :account_id
+                   AND je.status = 'POSTED'
+                   AND je.entry_date BETWEEN :start AND :end
+                 ORDER BY je.entry_date, jel.id
+            """),
+            {"account_id": account_id, "start": start, "end": end, "opening": opening},
+        )
+        return [
+            (row[0], row[1], row[2], row[3], _money(row[4]), _money(row[5]), _money(row[6]))
+            for row in rows
+        ]
