@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     rag_chunk_overlap: int = Field(default=200, ge=0, le=2000)
     rag_top_k: int = Field(default=6, ge=1, le=50)
     document_reconciliation_seconds: float = Field(default=900.0, gt=0, le=86400)
+    # Once a day by default; a wider ceiling than the 24h default so a
+    # deployment can space it out further without a code change.
+    anomaly_sweep_seconds: float = Field(default=86400.0, gt=0, le=604800)
 
     @field_validator("cors_origins", mode="before")
     @classmethod

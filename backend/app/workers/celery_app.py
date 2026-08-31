@@ -14,6 +14,7 @@ celery = Celery(
         "app.workers.tasks.outbox",
         "app.workers.tasks.inventory",
         "app.workers.tasks.documents",
+        "app.workers.tasks.anomaly",
     ],
 )
 celery.conf.update(
@@ -39,6 +40,10 @@ celery.conf.update(
         "documents-reconcile-orphans": {
             "task": "documents.reconcile_orphans",
             "schedule": settings.document_reconciliation_seconds,
+        },
+        "anomaly-daily-sweep": {
+            "task": "anomaly.run_daily_sweep",
+            "schedule": settings.anomaly_sweep_seconds,
         },
     },
 )

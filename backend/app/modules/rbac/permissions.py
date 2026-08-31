@@ -56,6 +56,8 @@ class Perm(StrEnum):
     ACCOUNTING_MANAGE = "accounting.manage"
     ACCOUNTING_POST = "accounting.post"
     ACCOUNTING_POST_CLOSED = "accounting.post_closed"
+    ANOMALY_READ = "anomaly.read"
+    ANOMALY_MANAGE = "anomaly.manage"
 
 
 PHASE_1_PERMISSIONS = tuple(permission.value for permission in Perm)

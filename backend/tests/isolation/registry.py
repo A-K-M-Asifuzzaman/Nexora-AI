@@ -6,6 +6,7 @@ from app.modules.accounting.models import (
     JournalEntryLine,
     ProductCostLayer,
 )
+from app.modules.anomaly.models import AnomalyAlert
 from app.modules.audit.models import AuditEvent
 from app.modules.branches.models import Branch, Warehouse
 from app.modules.catalog.models import (
@@ -141,6 +142,8 @@ TENANT_ISOLATION_MODELS: dict[type[object], str] = {
     DocumentChunk: "document chunks",
     DocumentAcl: "document ACL entries",
     DocumentJob: "document indexing jobs",
+    # Phase 10 — anomaly detection.
+    AnomalyAlert: "anomaly alerts",
 }
 
 # Role cannot inherit TenantScoped: system roles deliberately have tenant_id=NULL.

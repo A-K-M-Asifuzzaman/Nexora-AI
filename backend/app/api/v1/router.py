@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.modules.accounting.router import router as accounting_router
 from app.modules.ai.router import router as ai_router
+from app.modules.anomaly.router import router as anomaly_router
 from app.modules.audit.router import router as audit_router
 from app.modules.auth.router import router as auth_router
 from app.modules.branches.router import router as branches_router
@@ -9,6 +10,7 @@ from app.modules.branches.warehouse_router import router as warehouses_router
 from app.modules.catalog.router import router as catalog_router
 from app.modules.crm.router import router as crm_router
 from app.modules.documents.router import router as documents_router
+from app.modules.forecasting.router import router as forecasting_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.invitations.router import router as invitations_router
 from app.modules.members.router import router as members_router
@@ -42,3 +44,5 @@ router.include_router(purchasing_router)
 router.include_router(members_router)
 router.include_router(roles_router)
 router.include_router(audit_router)
+router.include_router(anomaly_router)
+router.include_router(forecasting_router)
