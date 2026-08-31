@@ -113,7 +113,15 @@ export async function proxyUpstream(request: Request, path: string[]): Promise<R
   if (!auth) return Response.json({ error: { code: "TOKEN_INVALID", message: "Authentication is required.", details: {} } }, { status: 401 });
   const url = new URL(`${backend}/api/v1/${path.join("/")}`);
   url.search = new URL(request.url).search;
-  const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.text();
+  // `.text()` would UTF-8-decode-and-re-encode the body, which is fine for
+  // JSON but corrupts anything binary — a multipart file upload's bytes are
+  // not valid UTF-8 in general. `arrayBuffer()` forwards them unmodified.
+  const contentType = request.headers.get("content-type") ?? "";
+  const body = ["GET", "HEAD"].includes(request.method)
+    ? undefined
+    : contentType.includes("multipart/form-data")
+      ? await request.arrayBuffer()
+      : await request.text();
   const call = (token: string) => fetch(url, {
     method: request.method,
     headers: { "Content-Type": request.headers.get("content-type") ?? "application/json", Authorization: `Bearer ${token}`, "X-Request-ID": request.headers.get("X-Request-ID") ?? crypto.randomUUID() },

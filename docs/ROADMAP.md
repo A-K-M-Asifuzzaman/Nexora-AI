@@ -248,15 +248,47 @@ paid external service.
 
 **Not built:** the chat UI, and the per-tenant token budget in `AI.md` §6.
 
-## Phase 9 — RAG · `[ ]`
-- [ ] Upload, validation, MIME sniffing, S3 storage
-- [ ] Async extract → chunk → embed → index
-- [ ] `TenantVectorStore` (sole Qdrant caller)
-- [ ] Tenant-filtered retrieval + document ACL
-- [ ] Citations with click-time re-authorization
-- [ ] Deletion / reindex / orphan reconciliation
-- [ ] Document manager + RAG chat UI
-- [ ] Adversarial isolation and injection tests
+## Phase 9 — RAG · `[x]` COMPLETE (pending Codex review)
+- [x] Upload, validation, content-based sniffing, S3 storage
+- [x] Async extract → chunk → embed → index
+- [x] `TenantVectorStore` (sole Qdrant caller)
+- [x] Tenant-filtered retrieval + document ACL
+- [x] Citations with click-time re-authorization
+- [x] Deletion / reindex / orphan reconciliation
+- [x] Document manager UI; RAG chat unified into the existing Phase 8 copilot
+      (`search_documents` is tool #9 there, not a separate chat surface —
+      matches `AI.md` treating RAG as one more copilot capability)
+- [x] Adversarial isolation and injection tests
+
+**Exit state (live PostgreSQL 16.14 + Qdrant 1.15.5 + MinIO, migration `0021`
+applied):**
+
+```
+backend pytest tests/integration/documents  19 passed
+backend pytest (full suite)                 303 passed (284 pre-existing + 19 new)
+backend ruff / mypy                         clean
+frontend lint / typecheck / build / test    clean; 38 passed
+browser E2E (Playwright, desktop + mobile)  upload → INDEXED → delete; 0 console/5xx errors
+```
+
+Content-based validation is deliberately not full MIME sniffing — CSV,
+Markdown and plain text are byte-for-byte indistinguishable in general, no
+signature check can tell them apart. It does catch a PDF magic-number
+mismatch and binary content wearing a `text/*` label, which is the
+actually-exploitable case.
+
+Four defects found and fixed, none of them caught by writing the feature the
+first time — see `AGENT_HANDOFF.md`'s Phase 9 section for the full account:
+an eager `app = create_app()` at import time that could permanently poison
+`get_settings()`'s cache depending on test order; `DocumentStorage`/
+`TenantVectorStore` provisioning methods that existed with no caller; the
+Celery indexing task never setting PostgreSQL's RLS session GUC, so it would
+have failed on every real invocation; and every document endpoint requiring a
+working LLM provider even to list documents, because the embedder was
+constructed eagerly.
+
+Not built: a per-tenant token/storage budget (mentioned in `AI.md` §6, not a
+Phase 9 roadmap line item).
 
 ## Phase 10 — Forecasting + Anomaly Detection · `[ ]`
 - [ ] Naive, moving average, exponential smoothing baselines
