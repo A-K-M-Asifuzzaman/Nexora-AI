@@ -4,6 +4,7 @@ from app.modules.accounting.router import router as accounting_router
 from app.modules.ai.router import router as ai_router
 from app.modules.anomaly.router import router as anomaly_router
 from app.modules.audit.router import router as audit_router
+from app.modules.auth.mfa_router import router as mfa_router
 from app.modules.auth.router import router as auth_router
 from app.modules.branches.router import router as branches_router
 from app.modules.branches.warehouse_router import router as warehouses_router
@@ -26,6 +27,7 @@ from app.modules.vat.router import router as vat_router
 router = APIRouter()
 router.include_router(accounting_router)
 router.include_router(auth_router)
+router.include_router(mfa_router)
 router.include_router(tenancy_router)
 router.include_router(branches_router)
 router.include_router(warehouses_router)

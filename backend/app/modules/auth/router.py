@@ -30,6 +30,7 @@ from app.core.redis import RedisClient
 from app.core.security import SecurityService
 from app.modules.audit import security_service as sec
 from app.modules.audit.security_service import SecurityEventService
+from app.modules.auth.mfa import MfaChallengeStore
 from app.modules.auth.ratelimit import (
     FORGOT_PER_IDENTITY,
     FORGOT_PER_IP,
@@ -43,6 +44,7 @@ from app.modules.auth.schemas import (
     EmailRequest,
     LoginRequest,
     MembershipSummary,
+    MfaChallengeResponse,
     RegisterRequest,
     ResetPasswordRequest,
     SwitchTenantRequest,
@@ -50,7 +52,7 @@ from app.modules.auth.schemas import (
     UserResponse,
     VerifyEmailRequest,
 )
-from app.modules.auth.service import AuthService, Login
+from app.modules.auth.service import AuthService, Login, MfaChallengeRequired
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -130,7 +132,7 @@ async def register(
     return {"status": "accepted"}
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=None)
 async def login(
     payload: LoginRequest,
     request: Request,
@@ -138,7 +140,7 @@ async def login(
     session: Annotated[AsyncSession, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings_from_app)],
     events: Annotated[SecurityEventService, Depends(get_security_events)],
-) -> TokenResponse:
+) -> TokenResponse | MfaChallengeResponse:
     ip = _client_ip(request)
     agent = request.headers.get("user-agent")
     # Per-identity stops a targeted guess; per-IP stops a broad sweep.
@@ -151,6 +153,16 @@ async def login(
     except AppError as exc:
         await events.record(sec.LOGIN_FAILED, "user", ip=ip, metadata={"code": exc.code})
         raise
+    if isinstance(result, MfaChallengeRequired):
+        # The password half genuinely succeeded — this is not a failure event,
+        # but it is not `LOGIN_SUCCEEDED` either: no session opened yet.
+        await events.record(sec.MFA_CHALLENGE_ISSUED, "user", actor_user_id=result.user_id, ip=ip)
+        token = await MfaChallengeStore(
+            cast(RedisClient, request.app.state.redis), settings
+        ).create(result.user_id)
+        return MfaChallengeResponse(
+            challenge_token=token, expires_in=settings.mfa_challenge_ttl_seconds
+        )
     await events.record(
         sec.LOGIN_SUCCEEDED,
         "user",

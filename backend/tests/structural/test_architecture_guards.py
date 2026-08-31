@@ -114,6 +114,13 @@ def test_tenant_filter_escape_hatch_matches_reviewed_budget() -> None:
         ("modules/auth/repository.py", "active_memberships"),
         ("modules/auth/repository.py", "get_active_membership"),
         ("modules/rbac/repository.py", "get_active_membership"),
+        # MFA credentials and recovery codes carry no tenant discriminator, the
+        # same as `users` and `refresh_tokens` above — a second factor belongs
+        # to the global identity, not to any one organization it belongs to.
+        ("modules/auth/mfa.py", "_credential"),
+        ("modules/auth/mfa.py", "disable"),
+        ("modules/auth/mfa.py", "_consume_recovery_code"),
+        ("modules/auth/mfa.py", "_replace_recovery_codes"),
         # Single-use identity tokens, like refresh tokens above: they are global
         # credentials with no tenant discriminator, and they are redeemed before
         # any tenant context exists — a user resetting a forgotten password has
@@ -137,6 +144,10 @@ def test_tenant_filter_escape_hatch_matches_reviewed_budget() -> None:
         # `outbox_events` is deliberately outside RLS for the same reason
         # (ADR-0023).
         ("modules/outbox/dispatcher.py", "drain"),
+        # A compliance check must check the tenant it was asked to check —
+        # explicitly, by parameter — not whichever one happened to be
+        # ambient on the caller's session (ADR-0016).
+        ("modules/audit/chain.py", "verify_chain"),
     }
     found: set[tuple[str, str]] = set()
     for path in python_files(APP_ROOT):

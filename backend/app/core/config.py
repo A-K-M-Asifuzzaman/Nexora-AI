@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Annotated, Literal
 
+from cryptography.fernet import Fernet
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
@@ -30,6 +31,18 @@ class Settings(BaseSettings):
     email_verification_expire_hours: int = 24
     password_reset_expire_hours: int = 1
     invitation_expire_days: int = 7
+
+    # Phase 11 — MFA/TOTP (SECURITY.md §12).
+    field_encryption_key: SecretStr
+    mfa_challenge_ttl_seconds: int = Field(default=300, ge=60, le=900)
+    mfa_recovery_codes_count: int = Field(default=10, ge=4, le=20)
+
+    # Phase 11 — virus scanning (SECURITY.md §8/§12). Off by default, same
+    # posture as the interface it replaced: a no-op unless explicitly wired.
+    antivirus_enabled: bool = False
+    clamd_host: str = "clamav"
+    clamd_port: int = 3310
+    clamd_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
 
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
     database_url: str
@@ -105,6 +118,19 @@ class Settings(BaseSettings):
     def validate_secret(cls, value: SecretStr) -> SecretStr:
         if len(value.get_secret_value().encode()) < 32:
             raise ValueError("JWT_SECRET_KEY must contain at least 32 bytes")
+        return value
+
+    @field_validator("field_encryption_key")
+    @classmethod
+    def validate_field_encryption_key(cls, value: SecretStr) -> SecretStr:
+        try:
+            Fernet(value.get_secret_value().encode())
+        except Exception as error:
+            raise ValueError(
+                "FIELD_ENCRYPTION_KEY must be a valid Fernet key "
+                "(32 url-safe base64-encoded bytes — generate with "
+                "`Fernet.generate_key()`)"
+            ) from error
         return value
 
     @model_validator(mode="after")

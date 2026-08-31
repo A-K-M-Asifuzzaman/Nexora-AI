@@ -12,6 +12,7 @@ from app.core.ids import uuid7
 from app.core.net import coerce_ip
 from app.core.security import SecurityService, generate_opaque_token, hash_opaque_token
 from app.db.session import service_transaction
+from app.modules.auth.mfa import MfaService
 from app.modules.auth.models import (
     AuthSession,
     EmailVerificationToken,
@@ -46,6 +47,19 @@ class Login:
     user: User
     tokens: RotatedTokens
     memberships: list[MembershipSummaryRow]
+
+
+@dataclass(frozen=True, slots=True)
+class MfaChallengeRequired:
+    """Password was correct; a second factor is still owed.
+
+    Deliberately not a `Login` with empty tokens — a caller that forgot to
+    check which type it got must not be able to treat this as success by
+    accident. No session opens, no tokens mint, until `complete_mfa_login`
+    runs after the challenge is verified.
+    """
+
+    user_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,8 +116,9 @@ class AuthService:
 
     async def login(
         self, payload: LoginRequest, *, ip: str | None, user_agent: str | None
-    ) -> Login:
-        """Authenticate and open a session.
+    ) -> Login | MfaChallengeRequired:
+        """Authenticate and open a session — or, if MFA is enabled, stop one
+        step short of that and hand back a challenge instead.
 
         Enumeration resistance: when the account does not exist we still run an
         Argon2 verification against a dummy hash, so the response time does not
@@ -111,7 +126,7 @@ class AuthService:
         """
         now = clock.now()
         failure: AppError | None = None
-        result: Login | None = None
+        result: Login | MfaChallengeRequired | None = None
         async with service_transaction(self.session):
             user = await self.repository.get_user_by_email(payload.email.lower())
             if user is None:
@@ -129,6 +144,14 @@ class AuthService:
                 )
             elif not user.is_active:
                 failure = AppError("INVALID_CREDENTIALS", "Invalid email or password.", 401)
+            elif await MfaService(self.session, self.settings).is_enabled(user.id):
+                # The password half of authentication really did succeed —
+                # reset the same way the no-MFA branch does — but no session
+                # opens and `last_login_at` does not move until the second
+                # factor also clears, in `complete_mfa_login`.
+                user.failed_login_count = 0
+                user.locked_until = None
+                result = MfaChallengeRequired(user_id=user.id)
             else:
                 user.failed_login_count = 0
                 user.locked_until = None
@@ -149,6 +172,30 @@ class AuthService:
         if result is None:
             raise RuntimeError("Login completed without a result")
         return result
+
+    async def complete_mfa_login(
+        self, user_id: UUID, *, ip: str | None, user_agent: str | None
+    ) -> Login:
+        """The second half of `login()`, run once the challenge is verified.
+
+        No password re-check here — the challenge token itself is proof the
+        password half already cleared; re-deriving `user` and opening the
+        session is exactly what the non-MFA branch of `login()` does.
+        """
+        now = clock.now()
+        async with service_transaction(self.session):
+            user = await self.repository.get_user_by_id(user_id)
+            if user is None or not user.is_active:
+                raise AppError("INVALID_CREDENTIALS", "Invalid email or password.", 401)
+            user.last_login_at = now
+            await self._publish_user(user.id)
+            memberships = await self.repository.active_memberships(user.id)
+            active_tenant_id = memberships[0][0].tenant_id if len(memberships) == 1 else None
+            return Login(
+                user=user,
+                tokens=self._open_session(user.id, active_tenant_id, now, ip, user_agent),
+                memberships=memberships,
+            )
 
     def _apply_backoff(self, user: User, now: datetime) -> bool:
         """Exponential backoff rather than a hard lock (SECURITY.md §2).

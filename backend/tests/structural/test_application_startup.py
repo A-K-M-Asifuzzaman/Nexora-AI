@@ -7,6 +7,7 @@ from tests.unit.test_security import settings_fixture
 def configure_required_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = settings_fixture()
     monkeypatch.setenv("JWT_SECRET_KEY", settings.jwt_secret_key.get_secret_value())
+    monkeypatch.setenv("FIELD_ENCRYPTION_KEY", settings.field_encryption_key.get_secret_value())
     monkeypatch.setenv("DATABASE_URL", settings.database_url)
     monkeypatch.setenv("DATABASE_URL_SYNC", settings.database_url_sync)
     monkeypatch.setenv("DATABASE_OWNER_URL", settings.database_owner_url)
@@ -67,6 +68,10 @@ def test_every_business_operation_declares_bearer_authentication(
         # Redeemed by someone who has no account and no tenant yet; the bearer
         # token is the authorization (migration 0011).
         ("/api/v1/invitations/accept", "post"),
+        # Runs before a session exists — authenticated by possessing the
+        # short-lived, rate-limited challenge token `/auth/login` issued, not
+        # by a bearer token (SECURITY.md §12, Phase 11 MFA).
+        ("/api/v1/auth/mfa/challenge", "post"),
     }
     offenders: list[str] = []
     for path, path_item in schema["paths"].items():
@@ -105,6 +110,7 @@ def test_every_protected_operation_rejects_anonymous_requests(
         # Redeemed by someone who has no account and no tenant yet; the bearer
         # token is the authorization (migration 0011).
         ("/api/v1/invitations/accept", "post"),
+        ("/api/v1/auth/mfa/challenge", "post"),
     }
     schema = app.openapi()
     offenders: list[str] = []

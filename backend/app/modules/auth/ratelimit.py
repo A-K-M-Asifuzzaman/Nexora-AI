@@ -38,6 +38,12 @@ FORGOT_PER_IDENTITY = Limit("forgot:id", 3, HOUR)
 FORGOT_PER_IP = Limit("forgot:ip", 10, HOUR)
 REFRESH_PER_SESSION = Limit("refresh:sid", 60, HOUR)
 
+# A TOTP code is 6 digits — a 10^6 space a limiter must actually close off,
+# not just discourage. Per-token so a burned-out challenge cannot be waited
+# out by re-requesting `/login`; per-IP as the broader backstop.
+MFA_CHALLENGE_PER_TOKEN = Limit("mfa:challenge:token", 5, FIFTEEN_MINUTES)
+MFA_CHALLENGE_PER_IP = Limit("mfa:challenge:ip", 20, FIFTEEN_MINUTES)
+
 
 class AuthRateLimiter:
     def __init__(self, redis: RedisClient, *, enabled: bool = True) -> None:

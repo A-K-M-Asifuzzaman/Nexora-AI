@@ -12,6 +12,7 @@ env:
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "22"
   JWT_SECRET_KEY: "01234567890123456789012345678901"
+  FIELD_ENCRYPTION_KEY: "NnxfjGzrhIft6hYs51IFZkuAcX7A6mr67TfxR7Xu76c="
   DATABASE_URL: postgresql+asyncpg://nexora_app:app_pw@127.0.0.1:5432/nexora_test
   DATABASE_URL_SYNC: postgresql+psycopg://nexora_app:app_pw@127.0.0.1:5432/nexora_test
   DATABASE_OWNER_URL: postgresql+psycopg://nexora_owner:owner_pw@127.0.0.1:5432/nexora_test

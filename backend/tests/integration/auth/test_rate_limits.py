@@ -12,6 +12,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 import httpx
+import pyotp
 import pytest
 import redis.asyncio as aioredis
 
@@ -144,3 +145,40 @@ async def test_limits_do_not_leak_between_identities(
     )
     # 401 (unknown account), not 429 — a different identity has its own budget.
     assert response.status_code == 401
+
+
+async def test_mfa_challenge_is_rate_limited_per_token(limited_client: httpx.AsyncClient) -> None:
+    """A TOTP code is 6 digits — a limiter that does not actually close off
+    that space is decorative. Uses the shared `client` fixture's disabled
+    limiter nowhere near this: `limited_client` is the one built with limits
+    switched on (see module docstring)."""
+    email = _email()
+    register = await limited_client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": PASSWORD, "full_name": "T"},
+    )
+    assert register.status_code == 202
+    login = await limited_client.post(
+        "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    setup = await limited_client.post("/api/v1/auth/mfa/setup", headers=headers)
+    secret = setup.json()["secret"]
+    await limited_client.post(
+        "/api/v1/auth/mfa/enable", headers=headers, json={"code": pyotp.TOTP(secret).now()}
+    )
+
+    second_login = await limited_client.post(
+        "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
+    )
+    challenge_token = second_login.json()["challenge_token"]
+    codes = [
+        (
+            await limited_client.post(
+                "/api/v1/auth/mfa/challenge",
+                json={"challenge_token": challenge_token, "code": "000000"},
+            )
+        ).status_code
+        for _ in range(8)
+    ]
+    assert 429 in codes, f"mfa challenge was never rate limited: {codes}"

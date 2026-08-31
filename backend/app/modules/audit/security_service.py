@@ -34,6 +34,13 @@ LOGOUT = "auth.logout"
 ACCOUNT_LOCKED = "auth.account_locked"
 REFRESH_REUSE_DETECTED = "auth.refresh_reuse_detected"  # noqa: S105 -- event name
 
+# MFA
+MFA_ENABLED = "auth.mfa_enabled"  # noqa: S105 -- event name, not a credential
+MFA_DISABLED = "auth.mfa_disabled"  # noqa: S105 -- event name, not a credential
+MFA_CHALLENGE_ISSUED = "auth.mfa_challenge_issued"  # noqa: S105 -- event name
+MFA_CHALLENGE_FAILED = "auth.mfa_challenge_failed"  # noqa: S105 -- event name
+MFA_CHALLENGE_SUCCEEDED = "auth.mfa_challenge_succeeded"  # noqa: S105 -- event name
+
 # Authorization / tenancy
 AUTHZ_DENIED = "authz.denied"
 RATELIMIT_EXCEEDED = "ratelimit.exceeded"

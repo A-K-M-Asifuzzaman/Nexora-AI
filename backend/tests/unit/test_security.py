@@ -7,8 +7,11 @@ from app.core.security import SecurityService, generate_opaque_token, hash_opaqu
 
 
 def settings_fixture() -> Settings:
+    from cryptography.fernet import Fernet
+
     return Settings(
         jwt_secret_key="x" * 32,
+        field_encryption_key=Fernet.generate_key().decode(),
         database_url="postgresql+asyncpg://user:pass@localhost/nexora",
         database_url_sync="postgresql+psycopg://user:pass@localhost/nexora",
         database_owner_url="postgresql+psycopg://owner:pass@localhost/nexora",

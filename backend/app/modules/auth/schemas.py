@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -69,3 +70,38 @@ class UserResponse(BaseModel):
     memberships: list[MembershipSummary] = []
     # password_hash is deliberately absent and must stay absent —
     # tests/structural asserts no response model exposes it.
+
+
+class MfaChallengeResponse(BaseModel):
+    """Returned by `/login` in place of `TokenResponse` when the password
+    was correct but a second factor is still owed. Distinguished from
+    `TokenResponse` by the discriminator field alone — no tokens exist
+    yet, deliberately, so there is nothing in this shape a caller who
+    forgets to check `mfa_required` could mistake for a session."""
+
+    mfa_required: Literal[True] = True
+    challenge_token: str
+    expires_in: int
+
+
+class MfaSetupResponse(BaseModel):
+    secret: str
+    otpauth_uri: str
+
+
+class MfaEnableRequest(StrictSchema):
+    code: str = Field(min_length=6, max_length=64)
+
+
+class MfaEnableResponse(BaseModel):
+    recovery_codes: list[str]
+
+
+class MfaDisableRequest(StrictSchema):
+    password: str = Field(min_length=1, max_length=128)
+    code: str = Field(min_length=6, max_length=64)
+
+
+class MfaVerifyRequest(StrictSchema):
+    challenge_token: str = Field(min_length=16, max_length=128)
+    code: str = Field(min_length=6, max_length=64)

@@ -5,6 +5,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Te
 from sqlalchemy.dialects.postgresql import CITEXT, INET
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.field_encryption import EncryptedText
 from app.db.base import Base
 from app.db.mixins import Timestamped, UUIDPk
 
@@ -75,4 +76,42 @@ class PasswordResetToken(UUIDPk, Base):
     )
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MfaCredential(UUIDPk, Timestamped, Base):
+    """One TOTP secret per user (SECURITY.md §12, Phase 11).
+
+    `enabled_at` is null between `POST /auth/mfa/setup` (secret generated,
+    provisioning URI returned) and the first successful `POST
+    /auth/mfa/enable` — a secret the user has not yet proven they can produce
+    a code for must not gate login, or a setup call an attacker triggers
+    (without completing it) would lock the real user out of nothing, but a
+    setup call the *user* abandons mid-flow must also not silently enable.
+    """
+
+    __tablename__ = "mfa_credentials"
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    secret_encrypted: Mapped[str] = mapped_column(EncryptedText, nullable=False)
+    enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MfaRecoveryCode(UUIDPk, Base):
+    """One-time codes minted when MFA is enabled (SECURITY.md §12, Phase 11).
+
+    Hashed the same way a refresh token is — a database read alone cannot
+    produce a usable code. Generated in a batch at enable time; disabling and
+    re-enabling MFA invalidates and replaces the whole batch.
+    """
+
+    __tablename__ = "mfa_recovery_codes"
+    __table_args__ = (Index("ix_mfa_recovery_codes_user_id", "user_id"),)
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
