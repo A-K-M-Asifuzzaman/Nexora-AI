@@ -1,4 +1,4 @@
-.PHONY: format lint typecheck test build verify up down
+.PHONY: format lint typecheck test build verify up down seed-demo
 
 # Verification environment, mirroring .github/workflows/ci.yml so that a green
 # `make verify` means a green CI. Every value is overridable from the shell:
@@ -50,3 +50,7 @@ up:
 
 down:
 	docker compose down
+
+# Idempotent — safe to re-run. Prints the demo login on completion.
+seed-demo:
+	cd backend && .venv/bin/python -m scripts.seed_demo

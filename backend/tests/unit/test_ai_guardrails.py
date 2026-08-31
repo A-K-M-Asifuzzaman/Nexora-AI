@@ -62,7 +62,7 @@ def test_the_shipped_registry_declares_a_permission_for_every_tool() -> None:
     from app.modules.ai import tools as _tools  # noqa: F401 -- registers them
     from app.modules.ai.registry import registry
 
-    assert len(registry.names()) == 8, registry.names()
+    assert len(registry.names()) == 9, registry.names()
     for name in registry.names():
         tool = registry.get(name)
         assert tool is not None and tool.permissions, name
@@ -194,4 +194,4 @@ def test_importing_only_the_router_still_registers_every_tool() -> None:
     from app.modules.ai.router import router  # noqa: F401
     from app.modules.ai.service import CopilotService
 
-    assert len(CopilotService.tool_catalogue()) == 8
+    assert len(CopilotService.tool_catalogue()) == 9

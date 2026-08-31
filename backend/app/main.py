@@ -60,7 +60,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
-        await redis.aclose()  # type: ignore[attr-defined]  # stale third-party stubs lack redis-py 5+
+        await redis.aclose()
         await engine.dispose()
 
     app = FastAPI(
@@ -94,6 +94,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(platform_router)
     app.include_router(api_v1_router, prefix=application_settings.api_v1_prefix)
     return app
-
-
-app = create_app()

@@ -18,6 +18,7 @@ from app.modules.catalog.models import (
     UnitOfMeasure,
 )
 from app.modules.crm.models import CrmActivity, CrmNote, Lead, Opportunity
+from app.modules.documents.models import Document, DocumentAcl, DocumentChunk, DocumentJob
 from app.modules.idempotency.models import IdempotencyKey
 from app.modules.inventory.models import (
     InventoryBalance,
@@ -135,6 +136,11 @@ TENANT_ISOLATION_MODELS: dict[type[object], str] = {
     VatRate: "VAT rates",
     VatTransaction: "VAT register entries",
     VatReturn: "VAT returns",
+    # Phase 9 — RAG.
+    Document: "documents",
+    DocumentChunk: "document chunks",
+    DocumentAcl: "document ACL entries",
+    DocumentJob: "document indexing jobs",
 }
 
 # Role cannot inherit TenantScoped: system roles deliberately have tenant_id=NULL.

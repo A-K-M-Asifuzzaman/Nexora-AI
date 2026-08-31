@@ -1,3 +1,5 @@
+from collections.abc import Awaitable
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +20,9 @@ class AuthorizationService:
         if membership is None:
             raise PermissionDeniedError("NO_ACTIVE_TENANT", "No active tenant membership.")
         cache_key = f"perms:{membership.id}:{membership.roles_version}"
-        cached = await self.redis.smembers(cache_key)
+        # redis-py types the sync/async split as a union on the command
+        # methods; on `redis.asyncio` it is always the awaitable branch.
+        cached = await cast(Awaitable[set[str]], self.redis.smembers(cache_key))
         if cached:
             permissions = frozenset(cached)
         else:

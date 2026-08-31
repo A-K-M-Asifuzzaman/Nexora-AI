@@ -54,6 +54,7 @@ async def test_tool_catalogue_is_the_whitelist(client: httpx.AsyncClient) -> Non
         "compare_branches",
         "get_top_products",
         "get_expense_summary",
+        "search_documents",
     }
     profit = next(t for t in response.json() if t["name"] == "get_profit_summary")
     assert profit["permissions"] == ["accounting.read", "reports.read"]

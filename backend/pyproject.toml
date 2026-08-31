@@ -13,6 +13,9 @@ dependencies = [
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
   "openai>=2,<3",
+  "qdrant-client>=1.15,<2",
+  "boto3>=1.40,<2",
+  "pypdf>=6,<7",
   "prometheus-client>=0.21,<1",
   "psycopg[binary]>=3.2,<4",
   "pydantic-settings>=2.7,<3",
@@ -69,3 +72,9 @@ markers = ["concurrency: tests requiring committed parallel transactions"]
 [tool.coverage.run]
 branch = true
 source = ["app"]
+
+[[tool.mypy.overrides]]
+# boto3/botocore ship no py.typed marker; the stubs package is a large
+# dependency for three call sites in DocumentStorage.
+module = ["boto3.*", "botocore.*"]
+ignore_missing_imports = true

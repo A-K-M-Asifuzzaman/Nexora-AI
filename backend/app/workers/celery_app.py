@@ -10,7 +10,11 @@ celery = Celery(
     backend=settings.celery_result_backend.get_secret_value(),
     # Without `include` the worker registers no tasks and drains nothing, while
     # appearing to start correctly.
-    include=["app.workers.tasks.outbox", "app.workers.tasks.inventory"],
+    include=[
+        "app.workers.tasks.outbox",
+        "app.workers.tasks.inventory",
+        "app.workers.tasks.documents",
+    ],
 )
 celery.conf.update(
     task_always_eager=settings.celery_task_always_eager,
@@ -31,6 +35,10 @@ celery.conf.update(
         "inventory-release-expired": {
             "task": "inventory.release_expired_reservations",
             "schedule": 60.0,
+        },
+        "documents-reconcile-orphans": {
+            "task": "documents.reconcile_orphans",
+            "schedule": settings.document_reconciliation_seconds,
         },
     },
 )

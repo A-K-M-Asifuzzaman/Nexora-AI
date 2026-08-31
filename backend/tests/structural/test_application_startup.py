@@ -32,7 +32,16 @@ def test_every_business_operation_declares_bearer_authentication(
     configure_required_environment(monkeypatch)
     from app.main import create_app
 
-    schema = create_app(settings_fixture()).openapi()
+    # `.openapi()` needs no request and no lifespan, but `create_app()` still
+    # opens a real async engine and a real Redis client (`app.state.engine`,
+    # `app.state.redis`) against the placeholder `settings_fixture()` DSNs.
+    # Without a `with TestClient(...)` the lifespan never runs, so nothing
+    # ever disposes them — a leaked engine bound to nonsense credentials,
+    # observed to corrupt an unrelated, later test's real database connection
+    # when this file runs before `tests/integration` in the same process.
+    app = create_app(settings_fixture())
+    with TestClient(app):
+        schema = app.openapi()
     # Every entry is an operation that MUST be reachable without a token, with the
     # reason it is safe. Adding to this set is a security decision — it should be
     # rare, and each line should survive review on its own.

@@ -72,6 +72,24 @@ class Settings(BaseSettings):
     llm_max_tool_iterations: int = Field(default=4, ge=1, le=10)
     ai_enabled: bool = True
 
+    # Phase 9 — RAG. One Qdrant collection partitioned by tenant (ADR-0013).
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: SecretStr | None = None
+    qdrant_collection: str = "nexora_documents"
+    # text-embedding-3-small. A mismatch here against the deployed collection
+    # produces a dimension error on upsert, not silent nonsense.
+    embedding_dimensions: int = Field(default=1536, ge=1, le=8192)
+    s3_endpoint_url: str | None = "http://localhost:9000"
+    s3_region: str = "us-east-1"
+    s3_bucket: str = "nexora-documents"
+    s3_access_key_id: SecretStr | None = None
+    s3_secret_access_key: SecretStr | None = None
+    document_max_bytes: int = Field(default=20 * 1024 * 1024, ge=1024, le=200 * 1024 * 1024)
+    rag_chunk_chars: int = Field(default=1200, ge=200, le=8000)
+    rag_chunk_overlap: int = Field(default=200, ge=0, le=2000)
+    rag_top_k: int = Field(default=6, ge=1, le=50)
+    document_reconciliation_seconds: float = Field(default=900.0, gt=0, le=86400)
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_origins(cls, value: object) -> object:

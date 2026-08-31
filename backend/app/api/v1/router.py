@@ -8,6 +8,7 @@ from app.modules.branches.router import router as branches_router
 from app.modules.branches.warehouse_router import router as warehouses_router
 from app.modules.catalog.router import router as catalog_router
 from app.modules.crm.router import router as crm_router
+from app.modules.documents.router import router as documents_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.invitations.router import router as invitations_router
 from app.modules.members.router import router as members_router
@@ -36,6 +37,7 @@ router.include_router(sales_router)
 router.include_router(reporting_router)
 router.include_router(vat_router)
 router.include_router(ai_router)
+router.include_router(documents_router)
 router.include_router(purchasing_router)
 router.include_router(members_router)
 router.include_router(roles_router)

@@ -17,6 +17,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.context import TenantContext
 from app.core.errors import DomainValidationError
 from app.modules.ai.registry import registry
@@ -241,3 +242,67 @@ async def get_expense_summary(
 ) -> dict[str, Any]:
     start, end = _range(args)
     return await VatService(session, context).summary(start, end)
+
+
+@registry.tool(
+    name="search_documents",
+    description=(
+        "Search the organisation's uploaded documents (policies, contracts, manuals) "
+        "for passages relevant to a question. Returns cited excerpts."
+    ),
+    permissions=(Perm.DOCUMENTS_READ,),
+    schema={
+        "type": "object",
+        "properties": {
+            "search_phrase": {
+                "type": "string",
+                "description": "What to look for, in natural language.",
+            },
+            "limit": {"type": "integer", "description": "Passages to return, max 10."},
+        },
+        "required": ["search_phrase"],
+        "additionalProperties": False,
+    },
+)
+async def search_documents(
+    session: AsyncSession, context: TenantContext, args: dict[str, Any]
+) -> dict[str, Any]:
+    """RAG retrieval as a tool, so it obeys the same permission rule as the rest.
+
+    The retrieved text is other people's writing: it is *data*, and the copilot
+    frames every tool result in `<untrusted_data>` before the model sees it
+    (AI.md §2.5). A document saying "ignore previous instructions" therefore
+    arrives as quoted content, not as instruction — and cannot widen the tool
+    set, because the model's tools were fixed by `context.permissions` before
+    the document was ever read.
+
+    The schema field is named `search_phrase`, not `query`: it is embedded for
+    semantic similarity and never reaches SQL, but ADR-0017's structural guard
+    (`test_no_tool_accepts_free_text_that_could_carry_sql`) forbids the literal
+    name `query` on every tool schema precisely so nobody has to re-litigate,
+    tool by tool, whether a "query"-shaped parameter is the safe kind.
+
+    Imported lazily: `app.modules.documents.service` pulls in boto3 and the
+    Qdrant client, and the copilot must remain importable without them.
+    """
+    from app.modules.documents.router import build_service
+
+    search_phrase = str(args.get("search_phrase", "")).strip()
+    if not search_phrase:
+        raise DomainValidationError("INVALID_SEARCH_PHRASE", "search_phrase must not be empty.")
+    settings = get_settings()
+    hits = await build_service(session, context, settings).search(
+        search_phrase, _limit(args, ceiling=10, default=settings.rag_top_k)
+    )
+    return {
+        "passages": [
+            {
+                "document_id": str(hit["document_id"]),
+                "document_title": hit["document_title"],
+                "chunk_index": hit["chunk_index"],
+                "page": hit["page"],
+                "excerpt": hit["content"],
+            }
+            for hit in hits
+        ]
+    }
