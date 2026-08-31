@@ -13,7 +13,7 @@ dependencies = [
   "email-validator>=2.2,<3",
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
-  "openai>=2,<3",
+  "openai>=2,<4",
   "qdrant-client>=1.15,<2",
   "boto3>=1.40,<2",
   "pypdf>=6,<7",
@@ -23,9 +23,9 @@ dependencies = [
   "pyjwt>=2.10,<3",
   "pyotp>=2.9,<3",
   "python-multipart>=0.0.20,<1",
-  "redis>=5.2,<7",
+  "redis>=5.2,<9",
   "sqlalchemy[asyncio]>=2.0.36,<3",
-  "structlog>=24.4,<26",
+  "structlog>=24.4,<27",
   "typer>=0.15,<1",
   "uvicorn[standard]>=0.34,<1",
   "uuid6>=2024.7.10",
@@ -33,10 +33,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "mypy>=1.14,<2",
-  "pytest>=8.3,<9",
-  "pytest-asyncio>=0.25,<1",
-  "pytest-cov>=6,<7",
+  "mypy>=1.14,<3",
+  "pytest>=8.3,<10",
+  "pytest-asyncio>=0.25,<2",
+  "pytest-cov>=6,<8",
   "ruff>=0.9,<1",
   "testcontainers[postgres,redis]>=4.9,<5",
 ]
