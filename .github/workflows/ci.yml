@@ -76,8 +76,8 @@ jobs:
           docker run -d --name qdrant -p 6333:6333 qdrant/qdrant:v1.15.5
       - name: Wait for MinIO and Qdrant
         run: |
-          curl --fail --silent --show-error --retry 20 --retry-delay 3 http://127.0.0.1:9000/minio/health/live
-          curl --fail --silent --show-error --retry 20 --retry-delay 3 http://127.0.0.1:6333/healthz
+          curl --fail --silent --show-error --retry 20 --retry-delay 3 --retry-all-errors http://127.0.0.1:9000/minio/health/live
+          curl --fail --silent --show-error --retry 20 --retry-delay 3 --retry-all-errors http://127.0.0.1:6333/healthz
       - run: alembic upgrade head
         working-directory: backend
       - run: pytest --cov=app --cov-report=term-missing --cov-fail-under=80
@@ -163,7 +163,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker compose up -d --build postgres redis migrate backend frontend
-      - run: curl --fail --retry 20 --retry-delay 3 http://localhost:8000/health
-      - run: curl --fail --retry 40 --retry-delay 3 http://localhost:3000/
+      - run: curl --fail --retry 20 --retry-delay 3 --retry-all-errors http://localhost:8000/health
+      - run: curl --fail --retry 20 --retry-delay 3 --retry-all-errors http://localhost:3000/
       - if: always()
         run: docker compose logs && docker compose down -v
