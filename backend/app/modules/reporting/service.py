@@ -27,6 +27,12 @@ from app.core.redis import RedisClient
 from app.db.session import service_transaction
 
 MAX_RANGE = timedelta(days=366)
+# Time-based expiry, not write-triggered invalidation: a new sale can take up
+# to this long to show up in a cached dashboard. Actively invalidating on
+# every write would mean touching every mutating endpoint across sales, POS,
+# purchasing, and inventory, each one a place to silently miss — for a
+# dashboard read (not a balance a checkout depends on), 120s of staleness is
+# the cheaper and more reliable trade.
 CACHE_TTL_SECONDS = 120
 
 
