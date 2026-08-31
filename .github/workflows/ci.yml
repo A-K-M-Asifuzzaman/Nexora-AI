@@ -55,8 +55,11 @@ jobs:
       # service containers cannot override the container command, and the
       # official image needs `server /data` as an argument to do anything;
       # bitnami's starts the server on its own from the same env vars.
+      # Unpinned deliberately: no network access to verify a dated tag
+      # actually exists at review time, and an unresolvable pin fails
+      # the whole job before a single test runs.
       minio:
-        image: bitnami/minio:2025
+        image: bitnami/minio:latest
         env: {MINIO_ROOT_USER: minioadmin, MINIO_ROOT_PASSWORD: minioadmin}
         ports: ["9000:9000"]
       qdrant:
@@ -168,6 +171,6 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker compose up -d --build postgres redis migrate backend frontend
       - run: curl --fail --retry 20 --retry-delay 3 http://localhost:8000/health
-      - run: curl --fail --retry 20 --retry-delay 3 http://localhost:3000/
+      - run: curl --fail --retry 40 --retry-delay 3 http://localhost:3000/
       - if: always()
         run: docker compose logs && docker compose down -v
