@@ -290,14 +290,42 @@ constructed eagerly.
 Not built: a per-tenant token/storage budget (mentioned in `AI.md` §6, not a
 Phase 9 roadmap line item).
 
-## Phase 10 — Forecasting + Anomaly Detection · `[ ]`
-- [ ] Naive, moving average, exponential smoothing baselines
-- [ ] Walk-forward backtesting; MAE / RMSE / MASE
-- [ ] Complex model only if it beats naive
-- [ ] Actual vs forecast vs uncertainty presentation
-- [ ] Robust-statistics anomaly detectors
-- [ ] Explainable alerts (observed, expected, deviation, reason, severity)
-- [ ] False-positive evaluation on seeded scenarios
+## Phase 10 — Forecasting + Anomaly Detection · `[x]`
+- [x] Naive, moving average, exponential smoothing baselines
+- [x] Walk-forward backtesting; MAE / RMSE / MASE
+- [x] Complex model only if it beats naive
+- [x] Actual vs forecast vs uncertainty presentation
+- [x] Robust-statistics anomaly detectors
+- [x] Explainable alerts (observed, expected, deviation, reason, severity)
+- [x] False-positive evaluation on seeded scenarios
+
+**Exit state (live PostgreSQL 16, migration `0022` applied):**
+
+```
+backend pytest tests/integration/anomaly       15 passed
+backend pytest tests/integration/forecasting    5 passed
+backend pytest tests/unit (detectors/algorithms/backtest)  24 passed
+backend pytest (full suite, --cov)             388 passed, 87% coverage
+backend ruff / mypy                            clean
+```
+
+Three defects found and fixed, none of them caught by writing the feature
+the first time — this had never executed against a live database before —
+see `AGENT_HANDOFF.md`'s Phase 10 section for the full account: every
+detector query crashing on its first real invocation (an interval built by
+string-concatenating a bound `int` against a `||` operator expecting text);
+every tenant's first day of real activity reading as a false CRITICAL
+anomaly against an all-zero 30-day baseline, which is not a rare case but
+the guaranteed first-run experience for every tenant; and the seeded role
+permissions having drifted from the design this same handoff already
+specified.
+
+Not built: `CASHIER_VOID_RATE` detects on `sales.status = 'VOIDED'`, and
+POS has no operation that ever sets it — voiding a sale is a real, separate
+feature outside this phase's scope. The detector and its test are correct
+against the schema and will fire the moment that status becomes reachable.
+No frontend surface yet (forecast chart, alert inbox) — backend and API
+only in this pass.
 
 ## Phase 11 — Security Hardening · `[ ]`
 - [ ] Full threat-model re-audit
