@@ -21,6 +21,7 @@ from app.core.config import get_settings
 from app.core.context import TenantContext, reset_tenant_context, set_tenant_context
 from app.core.ids import uuid7
 from app.modules.ai.providers_impl import build_provider
+from app.modules.documents.antivirus import build_scanner
 from app.modules.documents.models import Document, DocumentChunk, DocumentStatus
 from app.modules.documents.service import DocumentService
 from app.modules.documents.storage import DocumentStorage
@@ -76,6 +77,7 @@ async def _index(tenant_id: str, document_id: str, attempt: int) -> str:
                 store,
                 DocumentStorage(settings),
                 build_provider(settings),
+                build_scanner(settings),
             )
             document = await service.index(UUID(document_id), attempt)
             return document.status.value

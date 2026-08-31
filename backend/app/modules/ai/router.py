@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import RequirePermission, get_db
+from app.api.ratelimit import AI_ASK_PER_MEMBERSHIP, RequireRateLimit
 from app.core.config import Settings, get_settings
 from app.core.context import TenantContext
 from app.core.errors import AppError
@@ -30,7 +31,11 @@ async def tools(context: Use) -> list[ToolDescription]:
     return [ToolDescription(**t) for t in CopilotService.tool_catalogue()]
 
 
-@router.post("/ask", response_model=AskResponse)
+@router.post(
+    "/ask",
+    response_model=AskResponse,
+    dependencies=[Depends(RequireRateLimit(AI_ASK_PER_MEMBERSHIP))],
+)
 async def ask(payload: AskRequest, context: Use, session: Db, settings: Config) -> AskResponse:
     if not settings.ai_enabled:
         raise AppError("AI_DISABLED", "The AI copilot is disabled for this deployment.", 503)

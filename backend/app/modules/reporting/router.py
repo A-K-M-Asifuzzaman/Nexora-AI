@@ -5,12 +5,17 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import RequirePermission, get_db, get_redis
+from app.api.ratelimit import REPORT_PER_MEMBERSHIP, RequireRateLimit
 from app.core.context import TenantContext
 from app.core.redis import RedisClient
 from app.modules.rbac.permissions import Perm
 from app.modules.reporting.service import ReportingService
 
-router = APIRouter(prefix="/reports", tags=["reporting"])
+router = APIRouter(
+    prefix="/reports",
+    tags=["reporting"],
+    dependencies=[Depends(RequireRateLimit(REPORT_PER_MEMBERSHIP))],
+)
 
 Read = Annotated[TenantContext, Depends(RequirePermission(Perm.REPORTS_READ))]
 Db = Annotated[AsyncSession, Depends(get_db)]

@@ -24,6 +24,7 @@ from app.core.config import Settings, get_settings
 from app.core.context import TenantContext, reset_tenant_context, set_tenant_context
 from app.core.ids import uuid7
 from app.db.session import create_engine, create_session_factory
+from app.modules.documents.antivirus import AntivirusScanner, NoOpScanner
 from app.modules.documents.service import DocumentService
 from app.modules.documents.storage import DocumentStorage
 from app.modules.documents.vector_store import TenantVectorStore
@@ -82,7 +83,11 @@ def _fake_search_provider(monkeypatch: pytest.MonkeyPatch, documents_settings: S
 
 
 async def index_now(
-    session: AsyncSession, ctx: TenantContext, settings: Settings, document_id: uuid.UUID
+    session: AsyncSession,
+    ctx: TenantContext,
+    settings: Settings,
+    document_id: uuid.UUID,
+    scanner: AntivirusScanner | None = None,
 ) -> None:
     """Run the indexing pipeline synchronously, in place of the Celery task.
 
@@ -120,6 +125,7 @@ async def index_now(
             store,
             DocumentStorage(settings),
             FakeEmbedder(settings.embedding_dimensions),
+            scanner or NoOpScanner(),
         ).index(document_id)
     finally:
         reset_tenant_context(token)

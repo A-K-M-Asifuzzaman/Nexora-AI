@@ -7,10 +7,16 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import RequirePermission, get_db
+from app.api.ratelimit import (
+    DOCUMENT_SEARCH_PER_MEMBERSHIP,
+    DOCUMENT_UPLOAD_PER_MEMBERSHIP,
+    RequireRateLimit,
+)
 from app.core.config import Settings, get_settings
 from app.core.context import TenantContext
 from app.core.errors import AppError
 from app.modules.ai.providers_impl import build_provider
+from app.modules.documents.antivirus import build_scanner
 from app.modules.documents.schemas import (
     ChunkResponse,
     DocumentResponse,
@@ -85,6 +91,7 @@ def build_service(session: AsyncSession, ctx: TenantContext, settings: Settings)
         TenantVectorStore(settings),
         DocumentStorage(settings),
         _LazyEmbedder(settings),
+        build_scanner(settings),
     )
 
 
@@ -94,7 +101,12 @@ async def list_documents(context: Read, session: Db, settings: Config) -> list[D
     return [DocumentResponse.model_validate(document) for document in documents]
 
 
-@router.post("", response_model=DocumentResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(RequireRateLimit(DOCUMENT_UPLOAD_PER_MEMBERSHIP))],
+)
 async def upload_document(
     context: Upload,
     session: Db,
@@ -151,7 +163,11 @@ async def get_document(
     return DocumentResponse.model_validate(document)
 
 
-@router.post("/search", response_model=list[SearchHit])
+@router.post(
+    "/search",
+    response_model=list[SearchHit],
+    dependencies=[Depends(RequireRateLimit(DOCUMENT_SEARCH_PER_MEMBERSHIP))],
+)
 async def search_documents(
     payload: SearchRequest, context: Read, session: Db, settings: Config
 ) -> list[SearchHit]:

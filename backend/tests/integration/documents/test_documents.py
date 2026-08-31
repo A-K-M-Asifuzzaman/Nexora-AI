@@ -14,7 +14,9 @@ from app.core.clock import clock
 from app.core.config import Settings, get_settings
 from app.modules.ai.provider import ProviderUnavailableError
 from app.modules.documents import router as documents_router
+from app.modules.documents.antivirus import ScanResult
 from app.modules.documents.models import Document
+from app.modules.documents.storage import DocumentStorage
 from app.modules.notifications.email import CollectingEmailSender
 from app.modules.outbox.dispatcher import OutboxDispatcher
 from app.modules.outbox.models import OutboxEvent
@@ -26,6 +28,15 @@ pytestmark = pytest.mark.skipif(not os.getenv("DATABASE_URL"), reason="DATABASE_
 
 async def _owner(client: httpx.AsyncClient) -> dict[str, str]:
     return await tenant_headers(client, f"docs-{uuid.uuid4().hex[:10]}@acme-demo.com")
+
+
+class _AlwaysInfected:
+    """A scanner fake, the same idea as `FakeEmbedder` — proving the wiring
+    reacts correctly to a positive result does not need a real ClamAV
+    daemon, only something that returns one deterministically."""
+
+    async def scan(self, data: bytes) -> ScanResult:
+        return ScanResult(clean=False, signature="Test-Signature")
 
 
 class TestUploadValidation:
@@ -217,6 +228,55 @@ class TestLifecycle:
         assert (
             await client.get(f"/api/v1/documents/{document_id}", headers=headers)
         ).status_code == 404
+
+    async def test_infected_upload_is_quarantined_not_indexed(
+        self, client: httpx.AsyncClient, db_session, documents_settings
+    ) -> None:
+        """SECURITY.md §8: a document must not be retrievable (searchable,
+        re-downloadable) once a configured scan flags it — the object is
+        deleted from storage, not merely marked failed and left sitting
+        there for a second request to fetch."""
+        headers = await _owner(client)
+        me = (await client.get("/api/v1/auth/me", headers=headers)).json()
+        tenant_id = UUID(me["active_tenant_id"])
+
+        document = await upload_document(
+            client, headers, title="Suspicious file", content=b"whatever bytes"
+        )
+        document_id = UUID(str(document["id"]))
+        storage_key = await db_session.scalar(
+            select(Document.storage_key)
+            .where(Document.id == document_id)
+            .execution_options(skip_tenant_filter=True)
+        )
+
+        scanning_settings = documents_settings.model_copy(update={"antivirus_enabled": True})
+        await index_now(
+            db_session,
+            system_context(tenant_id),
+            scanning_settings,
+            document_id,
+            scanner=_AlwaysInfected(),
+        )
+        await db_session.commit()
+
+        fetched = (await client.get(f"/api/v1/documents/{document_id}", headers=headers)).json()
+        assert fetched["status"] == "FAILED"
+        assert "Malware" in fetched["failure_reason"]
+        assert fetched["chunk_count"] == 0
+
+        hits = (
+            await client.post(
+                "/api/v1/documents/search",
+                headers=headers,
+                json={"query": "whatever bytes", "limit": 5},
+            )
+        ).json()
+        assert document_id not in {UUID(str(hit["document_id"])) for hit in hits}
+
+        storage = DocumentStorage(scanning_settings)
+        with pytest.raises(Exception):  # noqa: B017, PT011 -- boto3's own ClientError, not ours to import here
+            await storage.get(storage_key)
 
     async def test_upload_stages_an_outbox_event_that_drives_indexing(
         self, client: httpx.AsyncClient, db_session

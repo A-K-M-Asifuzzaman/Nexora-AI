@@ -35,6 +35,7 @@ from app.db.mixins import TenantScoped, Timestamped, UUIDPk
 
 class DocumentStatus(StrEnum):
     PENDING = "PENDING"
+    PENDING_SCAN = "PENDING_SCAN"
     EXTRACTING = "EXTRACTING"
     INDEXED = "INDEXED"
     FAILED = "FAILED"

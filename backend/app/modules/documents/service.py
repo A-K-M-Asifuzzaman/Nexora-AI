@@ -29,6 +29,7 @@ from app.core.config import Settings
 from app.core.context import TenantContext
 from app.core.errors import AppError
 from app.modules.documents import chunking, storage
+from app.modules.documents.antivirus import AntivirusScanner
 from app.modules.documents.models import (
     Document,
     DocumentAcl,
@@ -63,12 +64,14 @@ class DocumentService:
         store: TenantVectorStore,
         files: DocumentStorage,
         embedder: Embedder,
+        scanner: AntivirusScanner,
     ) -> None:
         self._session = session
         self._ctx = ctx
         self._settings = settings
         self._store = store
         self._files = files
+        self._scanner = scanner
         self._embedder = embedder
 
     async def upload(
@@ -179,11 +182,44 @@ class DocumentService:
             attempt=attempt,
         )
         self._session.add(job)
+
+        data: bytes | None = None
+        if self._settings.antivirus_enabled:
+            # A distinct, persisted status rather than a step folded silently
+            # into EXTRACTING: SECURITY.md §8 promises a document "is not
+            # retrievable until scanned when scanning is enabled", which
+            # means a caller watching status must be able to see this state,
+            # not just its outcome.
+            document.status = DocumentStatus.PENDING_SCAN
+            await self._session.flush()
+            data = await self._files.get(document.storage_key)
+            result = await self._scanner.scan(data)
+            if not result.clean:
+                reason = (
+                    f"Malware detected ({result.signature})."
+                    if result.signature
+                    else "Malware detected."
+                )
+                document.status = DocumentStatus.FAILED
+                document.failure_reason = reason
+                job.status = JobStatus.FAILED
+                job.error = reason
+                job.finished_at = datetime.now(UTC)
+                # Deleted, not merely marked failed: the risk this control
+                # exists for is specifically "stored and re-downloaded", and
+                # this runs inside an independent worker task, not inline
+                # with an HTTP request's transaction — the same reason
+                # `delete_document` below is called synchronously too.
+                await self._files.delete(document.storage_key)
+                await self._session.flush()
+                return document
+
         document.status = DocumentStatus.EXTRACTING
         await self._session.flush()
 
         try:
-            data = await self._files.get(document.storage_key)
+            if data is None:
+                data = await self._files.get(document.storage_key)
             pages = chunking.extract(document.content_type, data)
             chunks = chunking.chunk_pages(
                 pages, self._settings.rag_chunk_chars, self._settings.rag_chunk_overlap
