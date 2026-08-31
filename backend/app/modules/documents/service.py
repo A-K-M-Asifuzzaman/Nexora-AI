@@ -7,9 +7,12 @@ Two invariants carry the phase:
    check against PostgreSQL. A citation is a claim about provenance, not a
    capability (AI.md §3.3): a user must not reach through a citation to a chunk
    retrieval would have denied.
-2. **Deletion is total.** The object, the rows and the vectors go together.
-   An orphaned vector outlives the document it came from and still answers
-   searches, which is a leak with a longer half-life than the upload.
+2. **Deletion is total.** The row disappears immediately; the object and the
+   vectors are guaranteed eventually, via the same transactional outbox that
+   backs indexing (`delete()`) — an orphaned vector outlives the document it
+   came from and still answers searches, which is a leak with a longer
+   half-life than the upload, so cleanup gets retries rather than one
+   synchronous attempt made while the delete's own transaction is open.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ from app.modules.documents.models import (
 )
 from app.modules.documents.storage import DocumentStorage
 from app.modules.documents.vector_store import TenantVectorStore
+from app.modules.outbox.service import OutboxService
 from app.modules.rbac.models import Role
 
 
@@ -342,16 +346,19 @@ class DocumentService:
         return document
 
     async def delete(self, document_id: UUID) -> None:
+        """Delete the row now; the row's rows and the row itself now go
+        together, atomically. Qdrant and S3 no longer do — a timeout on
+        either used to hold this transaction open and, on partial failure,
+        could leave the row gone while a vector still answered searches for
+        it. The outbox event is staged on this same transaction (ADR-0020):
+        it commits with the row or not at all, and the drain hands the
+        actual deletion to a Celery task with its own retries.
+        """
         document = await self.get(document_id)
         key = document.storage_key
-        # Vectors first: if this fails the transaction rolls back and the
-        # document is still whole. Deleting the row first and then failing here
-        # would leave vectors that answer searches for a document that no
-        # longer exists.
-        await self._store.delete_document(self._ctx, document.id)
+        OutboxService(self._session).enqueue_document_cleanup(self._ctx.tenant_id, document.id, key)
         await self._session.delete(document)  # Chunks, ACL and jobs cascade.
         await self._session.flush()
-        await self._files.delete(key)
 
     async def _get(self, document_id: UUID) -> Document:
         document = (

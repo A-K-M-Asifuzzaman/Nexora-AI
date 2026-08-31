@@ -120,6 +120,34 @@ async def _mark_failed(tenant_id: str, document_id: str, reason: str) -> None:
         await engine.dispose()
 
 
+async def _cleanup(tenant_id: str, document_id: str, storage_key: str) -> None:
+    """Delete a document's Qdrant vectors and S3 object.
+
+    The `documents` row is already gone — `delete()` removes it synchronously
+    and stages this task in the same transaction, so cleanup only ever touches
+    external systems and needs no database session of its own.
+    """
+    from uuid import UUID
+
+    settings = get_settings()
+    store = TenantVectorStore(settings)
+    context = TenantContext(
+        tenant_id=UUID(tenant_id),
+        membership_id=uuid7(),
+        user_id=uuid7(),
+        role_ids=frozenset(),
+        permissions=frozenset(),
+        branch_ids=None,
+    )
+    token = set_tenant_context(context)
+    try:
+        await store.delete_document(context, UUID(document_id))
+        await DocumentStorage(settings).delete(storage_key)
+    finally:
+        reset_tenant_context(token)
+        await store.close()
+
+
 async def _reconcile_once() -> int:
     """Delete Qdrant vectors whose owning `document_chunks` row no longer
     exists (`AI.md` §3.2: "orphaned vectors are a leak with a longer half-life
@@ -204,4 +232,29 @@ def index_document(self: Task, tenant_id: str, document_id: str) -> str:
     except Exception as error:
         if self.request.retries >= self.max_retries:
             asyncio.run(_mark_failed(tenant_id, document_id, f"Indexing failed: {error}"))
+        raise
+
+
+@celery.task(  # type: ignore[untyped-decorator]
+    name="documents.cleanup",
+    bind=True,
+    max_retries=5,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_jitter=True,
+)
+def cleanup_document(self: Task, tenant_id: str, document_id: str, storage_key: str) -> None:
+    try:
+        asyncio.run(_cleanup(tenant_id, document_id, storage_key))
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            # The row is already gone; a permanently failed cleanup only ever
+            # leaks external state (an orphaned vector, an S3 object), never a
+            # visible document — logged here since there is nothing left to
+            # mark FAILED on. `documents.reconcile_orphans` also independently
+            # sweeps orphaned vectors, so a vector leak self-heals; the S3
+            # object does not, which is the residual gap.
+            logger.error(
+                "documents.cleanup_exhausted", tenant_id=tenant_id, document_id=document_id
+            )
         raise

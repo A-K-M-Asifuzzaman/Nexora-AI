@@ -26,7 +26,7 @@ from app.core.clock import clock
 from app.core.config import Settings
 from app.modules.notifications.email import EmailSender, render
 from app.modules.outbox.models import OutboxEvent
-from app.modules.outbox.service import TOPIC_DOCUMENT_INDEX, TOPIC_EMAIL
+from app.modules.outbox.service import TOPIC_DOCUMENT_CLEANUP, TOPIC_DOCUMENT_INDEX, TOPIC_EMAIL
 
 logger = structlog.get_logger(__name__)
 
@@ -38,11 +38,20 @@ BACKOFF_MAX_SECONDS = 3600
 # a `documents.index` row without a Celery broker.
 DocumentIndexer = Callable[[str, str], None]
 
+# (tenant_id, document_id, storage_key) -> enqueue the Celery cleanup task.
+DocumentCleaner = Callable[[str, str, str], None]
+
 
 def _enqueue_index_task(tenant_id: str, document_id: str) -> None:
     from app.workers.tasks.documents import index_document
 
     index_document.delay(tenant_id, document_id)
+
+
+def _enqueue_cleanup_task(tenant_id: str, document_id: str, storage_key: str) -> None:
+    from app.workers.tasks.documents import cleanup_document
+
+    cleanup_document.delay(tenant_id, document_id, storage_key)
 
 
 class OutboxDispatcher:
@@ -52,17 +61,25 @@ class OutboxDispatcher:
         settings: Settings,
         sender: EmailSender,
         document_indexer: DocumentIndexer = _enqueue_index_task,
+        document_cleaner: DocumentCleaner = _enqueue_cleanup_task,
     ) -> None:
         self.session = session
         self.settings = settings
         self.sender = sender
         self.document_indexer = document_indexer
+        self.document_cleaner = document_cleaner
 
     def _dispatch(self, event: OutboxEvent) -> None:
         if event.topic == TOPIC_EMAIL:
             self.sender.send(render(event.payload))
         elif event.topic == TOPIC_DOCUMENT_INDEX:
             self.document_indexer(event.payload["tenant_id"], event.payload["document_id"])
+        elif event.topic == TOPIC_DOCUMENT_CLEANUP:
+            self.document_cleaner(
+                event.payload["tenant_id"],
+                event.payload["document_id"],
+                event.payload["storage_key"],
+            )
         else:
             # An unroutable row must fail loudly, the same as a bad address —
             # silently dropping it would be worse than the retry it costs.

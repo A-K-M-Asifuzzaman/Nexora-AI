@@ -18,6 +18,7 @@ from app.modules.outbox.models import OutboxEvent
 
 TOPIC_EMAIL = "email.send"
 TOPIC_DOCUMENT_INDEX = "documents.index"
+TOPIC_DOCUMENT_CLEANUP = "documents.cleanup"
 
 
 class OutboxService:
@@ -55,6 +56,31 @@ class OutboxService:
             tenant_id=tenant_id,
             topic=TOPIC_DOCUMENT_INDEX,
             payload={"tenant_id": str(tenant_id), "document_id": str(document_id)},
+        )
+        self.session.add(event)
+        return event
+
+    def enqueue_document_cleanup(
+        self, tenant_id: UUID, document_id: UUID, storage_key: str
+    ) -> OutboxEvent:
+        """Stage deletion of a document's Qdrant vectors and S3 object.
+
+        `delete()` used to make both calls itself, inline with the row delete —
+        a Qdrant or S3 timeout held the transaction open, and the row and the
+        external state could diverge on partial failure. The row commits
+        immediately here instead; the payload carries everything cleanup needs
+        (`storage_key` especially — the row that named it is already gone by
+        the time this drains) so it survives the row's own deletion.
+        """
+        event = OutboxEvent(
+            id=uuid7(),
+            tenant_id=tenant_id,
+            topic=TOPIC_DOCUMENT_CLEANUP,
+            payload={
+                "tenant_id": str(tenant_id),
+                "document_id": str(document_id),
+                "storage_key": storage_key,
+            },
         )
         self.session.add(event)
         return event

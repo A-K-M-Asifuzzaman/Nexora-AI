@@ -252,6 +252,54 @@ async def test_a_document_index_failure_retries_like_any_other_row(
     assert row.attempts >= 1
 
 
+async def test_a_document_cleanup_row_calls_the_injected_cleaner(session: AsyncSession) -> None:
+    """`delete()` stages this instead of calling Qdrant/S3 directly, so a
+    timeout on either can no longer hold the delete's own transaction open or
+    leave the row and the external state diverged (ADR-0020)."""
+    tenant_id = await _tenant(session)
+    document_id = uuid.uuid4()
+    storage_key = f"tenants/{tenant_id}/documents/{document_id}/doc.txt"
+    async with session.begin():
+        OutboxService(session).enqueue_document_cleanup(tenant_id, document_id, storage_key)
+        await session.flush()
+
+    calls: list[tuple[str, str, str]] = []
+    async with session.begin():
+        sent = await OutboxDispatcher(
+            session,
+            get_settings(),
+            CollectingEmailSender(),
+            document_cleaner=lambda t, d, k: calls.append((t, d, k)),
+        ).drain()
+    assert sent >= 1
+    assert (str(tenant_id), str(document_id), storage_key) in calls
+
+
+async def test_a_document_cleanup_failure_retries_like_any_other_row(
+    session: AsyncSession,
+) -> None:
+    tenant_id = await _tenant(session)
+    document_id = uuid.uuid4()
+    async with session.begin():
+        event = OutboxService(session).enqueue_document_cleanup(
+            tenant_id, document_id, "tenants/x/documents/y/doc.txt"
+        )
+        await session.flush()
+
+    def exploding_cleaner(tenant: str, document: str, key: str) -> None:
+        raise RuntimeError("qdrant unavailable")
+
+    async with session.begin():
+        sent = await OutboxDispatcher(
+            session, get_settings(), CollectingEmailSender(), document_cleaner=exploding_cleaner
+        ).drain()
+    assert sent == 0
+
+    row = await _reload(session, event.id)
+    assert row.sent_at is None
+    assert row.attempts >= 1
+
+
 async def test_an_unroutable_topic_fails_rather_than_being_silently_dropped(
     session: AsyncSession,
 ) -> None:

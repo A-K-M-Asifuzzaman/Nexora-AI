@@ -8,12 +8,13 @@ from uuid import UUID
 
 import httpx
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 
 from app.core.clock import clock
 from app.core.config import Settings, get_settings
 from app.modules.ai.provider import ProviderUnavailableError
 from app.modules.documents import router as documents_router
+from app.modules.documents.models import Document
 from app.modules.notifications.email import CollectingEmailSender
 from app.modules.outbox.dispatcher import OutboxDispatcher
 from app.modules.outbox.models import OutboxEvent
@@ -265,6 +266,70 @@ class TestLifecycle:
         ).drain()
         assert sent >= 1
         assert (tenant_id, document_id) in calls
+
+    async def test_delete_stages_an_outbox_event_that_drives_cleanup(
+        self, client: httpx.AsyncClient, db_session
+    ) -> None:
+        """`DELETE /documents/{id}` used to call Qdrant and S3 synchronously,
+        inline with the row's own transaction — a timeout on either held the
+        transaction open, and a failure between the two calls could leave the
+        row gone with a vector still answering searches for it. It now stages
+        a `documents.cleanup` outbox row on the same transaction as the row
+        delete, so this proves the row disappears immediately and the actual
+        cleanup is left to a retried, independently-dispatched task.
+        """
+        headers = await _owner(client)
+        me = (await client.get("/api/v1/auth/me", headers=headers)).json()
+        tenant_id = me["active_tenant_id"]
+
+        await db_session.execute(
+            update(OutboxEvent)
+            .where(OutboxEvent.sent_at.is_(None))
+            .values(sent_at=clock.now())
+            .execution_options(skip_tenant_filter=True)
+        )
+
+        document = await upload_document(client, headers, title="Cleanup proof")
+        document_id = str(document["id"])
+        # `documents` carries RLS (unlike `outbox_events`), so this session
+        # needs the GUC set before it can see the row at all, same as
+        # `index_now()` does.
+        await db_session.execute(
+            text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": tenant_id},
+        )
+        storage_key = await db_session.scalar(
+            select(Document.storage_key)
+            .where(Document.id == UUID(document_id))
+            .execution_options(skip_tenant_filter=True)
+        )
+
+        deleted = await client.delete(f"/api/v1/documents/{document_id}", headers=headers)
+        assert deleted.status_code == 204
+        assert (
+            await client.get(f"/api/v1/documents/{document_id}", headers=headers)
+        ).status_code == 404
+
+        row = await db_session.scalar(
+            select(OutboxEvent)
+            .where(OutboxEvent.topic == "documents.cleanup")
+            .where(OutboxEvent.payload["document_id"].astext == document_id)
+            .execution_options(skip_tenant_filter=True)
+        )
+        assert row is not None, "delete must stage the cleanup event, not call Qdrant/S3 directly"
+        assert row.sent_at is None
+        assert row.payload["tenant_id"] == tenant_id
+        assert row.payload["storage_key"] == storage_key
+
+        calls: list[tuple[str, str, str]] = []
+        sent = await OutboxDispatcher(
+            db_session,
+            get_settings(),
+            CollectingEmailSender(),
+            document_cleaner=lambda t, d, k: calls.append((t, d, k)),
+        ).drain()
+        assert sent >= 1
+        assert (tenant_id, document_id, storage_key) in calls
 
     async def test_reindex_replaces_rather_than_duplicates(
         self, client: httpx.AsyncClient, db_session, documents_settings
