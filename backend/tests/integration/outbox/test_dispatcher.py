@@ -22,6 +22,7 @@ from app.modules.outbox.dispatcher import OutboxDispatcher
 from app.modules.outbox.models import OutboxEvent
 from app.modules.outbox.service import OutboxService
 from app.modules.tenancy.models import Tenant
+from app.workers.tasks.outbox import _drain_once
 
 pytestmark = pytest.mark.skipif(not os.getenv("DATABASE_URL"), reason="DATABASE_URL not configured")
 
@@ -266,6 +267,17 @@ async def test_an_unroutable_topic_fails_rather_than_being_silently_dropped(
     row = await _reload(session, event_id)
     assert row.sent_at is None
     assert row.last_error is not None and "not.a.real.topic" in row.last_error
+
+
+async def test_the_celery_task_wrapper_opens_its_own_session_and_drains(
+    session: AsyncSession,
+) -> None:
+    """`session` fixture retires the backlog first: this proves the actual
+    Celery entrypoint (its own engine, its own session, a real
+    `SmtpEmailSender`) runs cleanly end to end, not just the `OutboxDispatcher`
+    class it wraps — a completely empty queue still exercises every line of
+    the wrapper without needing a real SMTP server to reach."""
+    assert await _drain_once() == 0
 
 
 def test_render_rejects_an_unknown_template() -> None:

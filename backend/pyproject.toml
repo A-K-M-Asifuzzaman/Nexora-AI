@@ -72,6 +72,12 @@ markers = ["concurrency: tests requiring committed parallel transactions"]
 [tool.coverage.run]
 branch = true
 source = ["app"]
+# SQLAlchemy's async engine bridges every awaited DB call through a greenlet
+# switch (asyncpg via `greenlet_spawn`); without this, coverage.py's tracer
+# does not follow execution across that switch, so anything after the first
+# awaited query in a function silently reads as "missing" even though a
+# passing test just executed it — a measurement bug, not a testing gap.
+concurrency = ["greenlet"]
 
 [[tool.mypy.overrides]]
 # boto3/botocore ship no py.typed marker; the stubs package is a large
