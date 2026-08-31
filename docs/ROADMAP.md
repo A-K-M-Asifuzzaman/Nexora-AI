@@ -306,6 +306,14 @@ constructed eagerly.
 Not built: a per-tenant token/storage budget (mentioned in `AI.md` §6, not a
 Phase 9 roadmap line item).
 
+**Fifth defect, found by a later review pass:** `delete()` called Qdrant and
+S3 synchronously inline with the row's own DB transaction — a timeout on
+either held the transaction open, and partial failure could leave the row
+gone while a vector still answered searches for it. Fixed the same way
+indexing already was: the row deletes immediately and a `documents.cleanup`
+outbox event carries the cleanup to a retried Celery task. See
+`AGENT_HANDOFF.md`.
+
 ## Phase 10 — Forecasting + Anomaly Detection · `[x]`
 - [x] Naive, moving average, exponential smoothing baselines
 - [x] Walk-forward backtesting; MAE / RMSE / MASE
