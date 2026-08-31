@@ -37,6 +37,7 @@ from app.modules.documents.models import (
 )
 from app.modules.documents.storage import DocumentStorage
 from app.modules.documents.vector_store import TenantVectorStore
+from app.modules.rbac.models import Role
 
 
 class Embedder(Protocol):
@@ -109,6 +110,27 @@ class DocumentService:
                 "Roles may only be attached to a role-restricted document.",
                 422,
             )
+        # A role_id is caller-supplied. Without this, a role belonging to
+        # another tenant — or one that never existed — would insert an ACL
+        # row unnoticed: the FK on document_acl.role_id catches "never
+        # existed" (as an opaque IntegrityError, not a clean 422), but
+        # nothing catches "real role, wrong tenant" at all.
+        wanted = set(dict.fromkeys(role_ids))
+        if wanted:
+            found = set(
+                await self._session.scalars(
+                    select(Role.id).where(
+                        Role.id.in_(wanted),
+                        (Role.tenant_id == self._ctx.tenant_id) | (Role.tenant_id.is_(None)),
+                    )
+                )
+            )
+            if wanted - found:
+                raise AppError(
+                    "DOCUMENT_ACL_INVALID_ROLE",
+                    "One or more roles do not exist in this organization.",
+                    422,
+                )
 
         document = Document(
             tenant_id=self._ctx.tenant_id,

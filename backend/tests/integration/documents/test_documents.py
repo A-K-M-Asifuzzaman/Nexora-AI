@@ -104,6 +104,65 @@ class TestUploadValidation:
         assert response.status_code == 422
         assert response.json()["error"]["code"] == "DOCUMENT_ACL_UNEXPECTED"
 
+    async def test_a_nonexistent_role_is_rejected(self, client: httpx.AsyncClient) -> None:
+        headers = await _owner(client)
+        response = await client.post(
+            "/api/v1/documents",
+            headers=headers,
+            data={
+                "title": "Restricted",
+                "visibility": "ROLE_RESTRICTED",
+                "role_ids": str(uuid.uuid4()),
+            },
+            files={"file": ("a.txt", b"secret", "text/plain")},
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "DOCUMENT_ACL_INVALID_ROLE"
+
+    async def test_a_role_from_another_tenant_is_rejected(self, client: httpx.AsyncClient) -> None:
+        """A role_id is caller-supplied. Without this check it would silently
+        attach another tenant's custom role to this document's ACL — real
+        row, wrong owner — rather than failing the way a bogus id does."""
+        owner = await _owner(client)
+        custom = await client.post(
+            "/api/v1/roles/",
+            headers=owner,
+            json={"code": "REVIEWER", "name": "Reviewer", "permission_codes": []},
+        )
+        assert custom.status_code == 201, custom.text
+
+        other = await _owner(client)
+        response = await client.post(
+            "/api/v1/documents",
+            headers=other,
+            data={
+                "title": "Restricted",
+                "visibility": "ROLE_RESTRICTED",
+                "role_ids": custom.json()["id"],
+            },
+            files={"file": ("a.txt", b"secret", "text/plain")},
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "DOCUMENT_ACL_INVALID_ROLE"
+
+    async def test_a_system_role_is_accepted(self, client: httpx.AsyncClient) -> None:
+        """System roles (OWNER, ADMIN, ...) are shared across every tenant —
+        unlike a custom role, naming one is always legitimate."""
+        headers = await _owner(client)
+        roles = (await client.get("/api/v1/roles/", headers=headers)).json()
+        system_role = next(r for r in roles if r["is_system"])
+        response = await client.post(
+            "/api/v1/documents",
+            headers=headers,
+            data={
+                "title": "Restricted",
+                "visibility": "ROLE_RESTRICTED",
+                "role_ids": system_role["id"],
+            },
+            files={"file": ("a.txt", b"secret", "text/plain")},
+        )
+        assert response.status_code == 202, response.text
+
     async def test_upload_returns_202_pending_not_201(self, client: httpx.AsyncClient) -> None:
         """Indexing is asynchronous; a 201 would claim the document is already
         searchable, which it is not (`AI.md` §3.1)."""
