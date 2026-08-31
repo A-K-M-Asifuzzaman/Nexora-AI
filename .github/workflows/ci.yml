@@ -161,7 +161,7 @@ jobs:
       - run: pip-audit
       - run: npm ci && npm audit --audit-level=high
         working-directory: frontend
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
 
   e2e-smoke:
     runs-on: ubuntu-latest
