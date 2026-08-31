@@ -34,6 +34,13 @@ from app.modules.numbering.service import NumberAllocator
 from app.modules.rbac.permissions import Perm
 
 ZERO = Decimal("0")
+# GRNI (2150) resolves a previously open architecture conflict: ACCOUNTING.md
+# §3.4-3.5 require a goods receipt to credit, and a supplier bill to debit,
+# "Goods Received Not Invoiced" — but the chart in §2.1 defined no such
+# account, so purchasing-side posting could not be implemented without
+# inventing one. Added here as a standard liability bridge account (goods
+# have arrived and are owed for, but no invoice has been recorded yet) and
+# mirrored into §2.1.
 DEFAULT_ACCOUNTS = (
     ("1000", "Assets", AccountType.ASSET, None, False, None),
     ("1100", "Current Assets", AccountType.ASSET, "1000", False, None),
@@ -45,6 +52,14 @@ DEFAULT_ACCOUNTS = (
     ("1500", "Fixed Assets", AccountType.ASSET, "1000", False, None),
     ("2000", "Liabilities", AccountType.LIABILITY, None, False, None),
     ("2100", "Accounts Payable", AccountType.LIABILITY, "2000", True, "AP_CONTROL"),
+    (
+        "2150",
+        "Goods Received Not Invoiced",
+        AccountType.LIABILITY,
+        "2000",
+        True,
+        "GRNI",
+    ),
     ("2200", "Output VAT Payable", AccountType.LIABILITY, "2000", True, "VAT_OUTPUT"),
     ("2300", "Accrued Liabilities", AccountType.LIABILITY, "2000", True, None),
     ("3000", "Equity", AccountType.EQUITY, None, False, None),
@@ -75,11 +90,22 @@ class AccountingService:
         )
 
     async def _bootstrap(self) -> None:
-        if await self.repository.journal() is not None:
-            return
+        """Idempotent per account, not only per tenant.
+
+        The original version returned immediately once a tenant had a
+        journal, which meant a system account added to `DEFAULT_ACCOUNTS`
+        after a tenant's first post (as `GRNI` was — see the module
+        docstring) would never reach a tenant that had already bootstrapped.
+        Every run now backfills whatever `DEFAULT_ACCOUNTS` entries are
+        missing for this tenant, and only creates the journal/fiscal period
+        the first time.
+        """
         tenant = await self.repository.tenant(self.context.tenant_id)
-        parents: dict[str, UUID] = {}
+        existing = {account.code: account.id for account in await self.repository.accounts()}
+        parents: dict[str, UUID] = dict(existing)
         for code, name, kind, parent_code, postable, system_code in DEFAULT_ACCOUNTS:
+            if code in existing:
+                continue
             account = Account(
                 id=uuid7(),
                 tenant_id=self.context.tenant_id,
@@ -95,33 +121,35 @@ class AccountingService:
             )
             self.repository.add(account)
             parents[code] = account.id
-        self.repository.add(
-            Journal(
-                id=uuid7(),
-                tenant_id=self.context.tenant_id,
-                code="GENERAL",
-                name="General Journal",
-                is_system=True,
-                is_active=True,
+
+        if await self.repository.journal() is None:
+            self.repository.add(
+                Journal(
+                    id=uuid7(),
+                    tenant_id=self.context.tenant_id,
+                    code="GENERAL",
+                    name="General Journal",
+                    is_system=True,
+                    is_active=True,
+                )
             )
-        )
-        today = datetime.now(UTC).date()
-        month = tenant.fiscal_year_start_month
-        year = today.year if today.month >= month else today.year - 1
-        start = date(year, month, 1)
-        end_month = month - 1 or 12
-        end_year = year + 1 if month > 1 else year
-        end = date(end_year, end_month, monthrange(end_year, end_month)[1])
-        self.repository.add(
-            FiscalPeriod(
-                id=uuid7(),
-                tenant_id=self.context.tenant_id,
-                name=f"FY {year}/{end_year}",
-                start_date=start,
-                end_date=end,
-                status=PeriodStatus.OPEN,
+            today = datetime.now(UTC).date()
+            month = tenant.fiscal_year_start_month
+            year = today.year if today.month >= month else today.year - 1
+            start = date(year, month, 1)
+            end_month = month - 1 or 12
+            end_year = year + 1 if month > 1 else year
+            end = date(end_year, end_month, monthrange(end_year, end_month)[1])
+            self.repository.add(
+                FiscalPeriod(
+                    id=uuid7(),
+                    tenant_id=self.context.tenant_id,
+                    name=f"FY {year}/{end_year}",
+                    start_date=start,
+                    end_date=end,
+                    status=PeriodStatus.OPEN,
+                )
             )
-        )
         await self.session.flush()
 
     async def list_accounts(self) -> list[Account]:

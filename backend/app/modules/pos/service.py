@@ -15,6 +15,8 @@ from app.core.errors import (
 )
 from app.core.ids import uuid7
 from app.db.session import service_transaction
+from app.modules.accounting.posting_rules import cash_sale, pos_refund
+from app.modules.accounting.service import AccountingService
 from app.modules.audit.service import AuditService
 from app.modules.idempotency.service import IdempotencyService
 from app.modules.inventory.models import MovementType
@@ -344,6 +346,7 @@ class PosService:
                 rendered_at=datetime.now(UTC),
             )
             self.repository.add(receipt)
+            await self._post_sale(sale)
             self.audit.record(self.context, events.SALE_COMPLETED, "sale", sale.id)
             await idempotency.complete(
                 endpoint="POST /pos/checkout",
@@ -352,6 +355,67 @@ class PosService:
                 response_body={"id": str(sale.id)},
             )
             return sale, lines, payments, receipt, False
+
+    async def _post_sale(self, sale: Sale) -> None:
+        """ACCOUNTING.md §3.1: two entries, one transaction. Revenue and cost
+        recognition stay separate journal entries so a restocking return
+        (reverse both) is distinguishable from a price correction (reverse
+        revenue only) — the same distinction `sale_returns.restock` already
+        carries in the data. Checkout always collects full tender up front
+        (`TENDER_INSUFFICIENT` otherwise), so every POS sale is a cash sale
+        in the accounting sense regardless of tender type, matching
+        `posting_rules.cash_sale`.
+        """
+        accounting = AccountingService(self.session, self.context)
+        revenue_lines, cost_lines = cash_sale(sale.net_amount, sale.tax_amount, sale.cost_amount)
+        await accounting.post(
+            entry_date=sale.occurred_at.date(),
+            description=f"POS sale {sale.sale_number}",
+            source_type="pos_sale",
+            source_id=sale.id,
+            event_type="POS_SALE_REVENUE",
+            lines=revenue_lines,
+        )
+        if sale.cost_amount > ZERO:
+            await accounting.post(
+                entry_date=sale.occurred_at.date(),
+                description=f"POS sale COGS {sale.sale_number}",
+                source_type="pos_sale",
+                source_id=sale.id,
+                event_type="POS_SALE_COGS",
+                lines=cost_lines,
+            )
+
+    async def _post_refund(
+        self, sale_return: SaleReturn, net: Decimal, tax: Decimal, cost: Decimal
+    ) -> None:
+        """ACCOUNTING.md §3.7. A POS refund always restocks (the checkout
+        flow above has no non-restocking path — every refunded line already
+        posts a `SALE_RETURN` movement), so the cost-reversal entry always
+        applies here, unlike `sales.credit_notes`, which can choose not to."""
+        accounting = AccountingService(self.session, self.context)
+        revenue_lines, cost_lines = pos_refund(net, tax, cost, restock=True)
+        # A line refunded from a fully-discounted (net == 0) sale is a real,
+        # if unusual, case — nothing to reverse in the ledger for it, and
+        # posting a zero-value entry would itself be rejected as unbalanced.
+        if net + tax > ZERO:
+            await accounting.post(
+                entry_date=sale_return.occurred_at.date(),
+                description=f"POS refund {sale_return.return_number}",
+                source_type="pos_return",
+                source_id=sale_return.id,
+                event_type="POS_REFUND_REVENUE",
+                lines=revenue_lines,
+            )
+        if cost_lines is not None:
+            await accounting.post(
+                entry_date=sale_return.occurred_at.date(),
+                description=f"POS refund COGS reversal {sale_return.return_number}",
+                source_type="pos_return",
+                source_id=sale_return.id,
+                event_type="POS_REFUND_COGS",
+                lines=cost_lines,
+            )
 
     async def hold(self, payload: HoldCreate) -> HeldSale:
         async with service_transaction(self.session):
@@ -419,7 +483,7 @@ class PosService:
                 raise DomainValidationError("DUPLICATE_LINE", "A sale line may appear only once.")
             if any(item.sale_line_id not in by_id for item in payload.lines):
                 raise NotFoundError()
-            total = ZERO
+            total = refund_net = refund_tax = refund_cost = ZERO
             sale_return = SaleReturn(
                 id=uuid7(),
                 tenant_id=self.context.tenant_id,
@@ -444,6 +508,15 @@ class PosService:
                     raise NotFoundError()
                 amount = round_money(line.total_amount * item.quantity / line.quantity)
                 total += amount
+                # Proportional to the quantity actually refunded, from the
+                # sale line's own stored figures — never the current price
+                # or current average cost, so a return after a price or cost
+                # change still reverses exactly what the original sale
+                # recognised (ACCOUNTING.md §3.7: "restock uses the original
+                # sale's cost, not the current average cost").
+                refund_net += round_money(line.net_amount * item.quantity / line.quantity)
+                refund_tax += round_money(line.tax_amount * item.quantity / line.quantity)
+                refund_cost += line.unit_cost * item.quantity
                 line.refunded_quantity += item.quantity
                 self.repository.add(
                     SaleReturnLine(
@@ -471,6 +544,7 @@ class PosService:
             sale_return.return_number = await NumberAllocator(
                 self.session, self.context.tenant_id
             ).allocate("pos_return", str(sale_return.occurred_at.year))
+            await self._post_refund(sale_return, refund_net, refund_tax, refund_cost)
             self.audit.record(self.context, events.SALE_REFUNDED, "sale_return", sale_return.id)
             await idempotency.complete(
                 endpoint="POST /pos/refunds",

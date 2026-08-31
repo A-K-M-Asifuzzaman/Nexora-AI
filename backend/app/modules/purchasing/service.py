@@ -4,7 +4,9 @@ The mirror of `sales`, with the asymmetry that matters: a goods receipt posts
 `RECEIPT` movements carrying `unit_cost`, so it is the event that moves the
 weighted-average cost (ADR-0018). Selling consumes that cost; it never sets it.
 
-**No journal entries are posted.** That is Phase 5.
+Goods receipt, bill issuance, and supplier payment each post the matching
+journal entry from `accounting.posting_rules` (ACCOUNTING.md §3.4-3.6),
+inside the same transaction as the operational write.
 """
 
 from datetime import UTC, datetime
@@ -23,6 +25,8 @@ from app.core.errors import (
 )
 from app.core.ids import uuid7
 from app.db.session import service_transaction
+from app.modules.accounting.posting_rules import goods_receipt, supplier_bill, supplier_payment
+from app.modules.accounting.service import AccountingService
 from app.modules.audit.service import AuditService
 from app.modules.branches.models import Warehouse
 from app.modules.catalog.models import Product
@@ -48,7 +52,7 @@ from app.modules.purchasing.schemas import (
     SupplierBillCreate,
     SupplierPaymentCreate,
 )
-from app.modules.sales.models import Payment, PaymentAllocation, PaymentDirection
+from app.modules.sales.models import Payment, PaymentAllocation, PaymentDirection, PaymentMethod
 from app.modules.sales.money import line_totals, round_money
 
 ZERO = Decimal("0")
@@ -267,6 +271,7 @@ class PurchasingService:
             )
             self.repository.add(receipt)
 
+            cost = ZERO
             for line_id in sorted(requested, key=lambda key: by_id[key].product_id.bytes):
                 line = by_id[line_id]
                 quantity, override = requested[line_id]
@@ -290,6 +295,7 @@ class PurchasingService:
                         reference_type="goods_receipt",
                         reference_id=receipt.id,
                     )
+                    cost += quantity * unit_cost
                 line.received_quantity += quantity
                 self.repository.add(
                     GoodsReceiptLine(
@@ -311,10 +317,22 @@ class PurchasingService:
             receipt.receipt_number = await NumberAllocator(
                 self.session, self.context.tenant_id
             ).allocate("goods_receipt", self._period())
+            if cost > ZERO:
+                await self._post_goods_receipt(receipt, cost)
             self.audit.record(
                 self.context, events.GOODS_RECEIPT_POSTED, "goods_receipt", receipt.id
             )
             return receipt
+
+    async def _post_goods_receipt(self, receipt: GoodsReceipt, cost: Decimal) -> None:
+        await AccountingService(self.session, self.context).post(
+            entry_date=receipt.received_at.date(),
+            description=f"Goods receipt {receipt.receipt_number}",
+            source_type="goods_receipt",
+            source_id=receipt.id,
+            event_type="GOODS_RECEIPT",
+            lines=goods_receipt(cost),
+        )
 
     # --------------------------------------------------------------- billing
 
@@ -402,6 +420,7 @@ class PurchasingService:
             bill.bill_number = await NumberAllocator(self.session, self.context.tenant_id).allocate(
                 "supplier_bill", self._period()
             )
+            await self._post_bill(bill)
             self.audit.record(
                 self.context,
                 events.SUPPLIER_BILL_ISSUED,
@@ -410,6 +429,18 @@ class PurchasingService:
                 {"bill_number": bill.bill_number},
             )
             return bill
+
+    async def _post_bill(self, bill: SupplierBill) -> None:
+        """ACCOUNTING.md §3.5. Clears the GRNI bridge opened by the goods
+        receipt and recognises the AP liability plus reclaimable input VAT."""
+        await AccountingService(self.session, self.context).post(
+            entry_date=bill.issue_date,
+            description=f"Supplier bill {bill.bill_number}",
+            source_type="supplier_bill",
+            source_id=bill.id,
+            event_type="SUPPLIER_BILL_ISSUED",
+            lines=supplier_bill(bill.net_amount, bill.tax_amount),
+        )
 
     async def get_bill(self, bill_id: UUID) -> tuple[SupplierBill, list[SupplierBillLine]]:
         async with service_transaction(self.session):
@@ -516,6 +547,7 @@ class PurchasingService:
             payment.payment_number = await NumberAllocator(
                 self.session, self.context.tenant_id
             ).allocate("purchase_payment", self._period())
+            await self._post_supplier_payment(payment)
             self.audit.record(
                 self.context,
                 events.SUPPLIER_PAYMENT_RECORDED,
@@ -531,6 +563,22 @@ class PurchasingService:
                     response_body={"id": str(payment.id)},
                 )
             return payment, False
+
+    async def _post_supplier_payment(self, payment: Payment) -> None:
+        """ACCOUNTING.md §3.6. `payment.amount` is what actually left the
+        business (allocated or not) — the AP side is unaffected by whether
+        it has been allocated to a bill yet."""
+        if payment.amount <= ZERO:
+            return
+        lines = supplier_payment(payment.amount, cash=payment.method == PaymentMethod.CASH)
+        await AccountingService(self.session, self.context).post(
+            entry_date=payment.payment_date,
+            description=f"Supplier payment {payment.payment_number}",
+            source_type="payment",
+            source_id=payment.id,
+            event_type="SUPPLIER_PAYMENT",
+            lines=lines,
+        )
 
     # ------------------------------------------------------------- reporting
 

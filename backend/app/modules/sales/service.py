@@ -5,8 +5,15 @@ transition depends on state the column cannot see (how much is fulfilled, how
 much is paid). Every transition goes through `_require_status`, so an illegal
 move is a `409` rather than a silently corrupted document.
 
-**No journal entries are posted.** That is Phase 5 (`ACCOUNTING.md` §3). This
-module records the commercial documents and the receivable they imply.
+Journal entries post inside the same transaction as the operational event
+they represent (`ACCOUNTING.md` §3). Revenue and cost recognition are
+separate entries there too (§3.1's POS split), and here they are also
+separated *in time*: `issue_invoice` posts revenue (§3.2, AR replacing cash)
+because that is when the receivable and the revenue exist; `fulfil` posts
+COGS at the current average cost, because that is when goods actually leave
+the warehouse — an order can be invoiced before, after, or independently of
+being fulfilled, so there is no single moment that is correctly "the sale"
+for both halves at once.
 """
 
 from datetime import UTC, datetime
@@ -25,6 +32,13 @@ from app.core.errors import (
 )
 from app.core.ids import uuid7
 from app.db.session import service_transaction
+from app.modules.accounting.posting_rules import (
+    cogs_recognition,
+    credit_sale,
+    customer_payment,
+    sales_return,
+)
+from app.modules.accounting.service import AccountingService
 from app.modules.audit.service import AuditService
 from app.modules.branches.models import Warehouse
 from app.modules.catalog.models import Product
@@ -45,6 +59,7 @@ from app.modules.sales.models import (
     Payment,
     PaymentAllocation,
     PaymentDirection,
+    PaymentMethod,
     Quotation,
     QuotationLine,
     QuotationStatus,
@@ -470,6 +485,7 @@ class SalesService:
 
             # Sorted by product id so stock rows are locked in the same order
             # inventory itself uses (ARCHITECTURE.md §12).
+            cost = ZERO
             for line_id in sorted(requested, key=lambda key: by_id[key].product_id.bytes):
                 line = by_id[line_id]
                 quantity = requested[line_id]
@@ -492,6 +508,12 @@ class SalesService:
                         reference_type="fulfillment",
                         reference_id=fulfillment.id,
                     )
+                    # A sale movement consumes at the current average cost
+                    # without changing it (ADR-0018 revalues only on
+                    # receipt), so reading it before or after the movement
+                    # above gives the same figure — this is the cost COGS
+                    # recognises for the quantity leaving right now.
+                    cost += quantity * product.cost_price
                 line.fulfilled_quantity += quantity
                 self.repository.add(
                     FulfillmentLine(
@@ -512,10 +534,25 @@ class SalesService:
             fulfillment.fulfillment_number = await NumberAllocator(
                 self.session, self.context.tenant_id
             ).allocate("fulfillment", self._period())
+            await self._post_fulfillment(fulfillment, cost)
             self.audit.record(
                 self.context, events.FULFILLMENT_POSTED, "fulfillment", fulfillment.id
             )
             return fulfillment
+
+    async def _post_fulfillment(self, fulfillment: Fulfillment, cost: Decimal) -> None:
+        """COGS at the moment stock actually leaves — see the module
+        docstring for why this is not posted alongside invoice revenue."""
+        if cost <= ZERO:
+            return
+        await AccountingService(self.session, self.context).post(
+            entry_date=fulfillment.shipped_at.date(),
+            description=f"Fulfillment {fulfillment.fulfillment_number}",
+            source_type="fulfillment",
+            source_id=fulfillment.id,
+            event_type="FULFILLMENT_COGS",
+            lines=cogs_recognition(cost),
+        )
 
     # -------------------------------------------------------------- invoices
 
@@ -616,6 +653,7 @@ class SalesService:
             invoice.invoice_number = await NumberAllocator(
                 self.session, self.context.tenant_id
             ).allocate("invoice", self._period())
+            await self._post_invoice(invoice)
             self.audit.record(
                 self.context,
                 events.INVOICE_ISSUED,
@@ -630,6 +668,21 @@ class SalesService:
                 response_body={"id": str(invoice.id)},
             )
             return invoice, False
+
+    async def _post_invoice(self, invoice: Invoice) -> None:
+        """ACCOUNTING.md §3.2. Revenue only — see the module docstring for
+        why cost is posted separately, at `fulfil`, not here."""
+        if invoice.net_amount + invoice.tax_amount <= ZERO:
+            return
+        lines = credit_sale(invoice.net_amount, invoice.tax_amount)
+        await AccountingService(self.session, self.context).post(
+            entry_date=invoice.issue_date,
+            description=f"Invoice {invoice.invoice_number}",
+            source_type="invoice",
+            source_id=invoice.id,
+            event_type="INVOICE_ISSUED",
+            lines=lines,
+        )
 
     async def get_invoice(self, invoice_id: UUID) -> tuple[Invoice, list[InvoiceLine]]:
         async with service_transaction(self.session):
@@ -748,6 +801,7 @@ class SalesService:
             payment.payment_number = await NumberAllocator(
                 self.session, self.context.tenant_id
             ).allocate("sales_payment", self._period())
+            await self._post_payment(payment)
             self.audit.record(
                 self.context,
                 events.PAYMENT_RECORDED,
@@ -763,6 +817,23 @@ class SalesService:
                     response_body={"id": str(payment.id)},
                 )
             return payment, allocations, False
+
+    async def _post_payment(self, payment: Payment) -> None:
+        """ACCOUNTING.md §3.3. `payment.amount` is what actually landed
+        (allocated or not) — unallocated payments sit as customer credit,
+        which the receivable side already accounts for; the cash/bank side
+        of the entry is unaffected by whether it has been allocated yet."""
+        if payment.amount <= ZERO:
+            return
+        lines = customer_payment(payment.amount, cash=payment.method == PaymentMethod.CASH)
+        await AccountingService(self.session, self.context).post(
+            entry_date=payment.payment_date,
+            description=f"Customer payment {payment.payment_number}",
+            source_type="payment",
+            source_id=payment.id,
+            event_type="CUSTOMER_PAYMENT",
+            lines=lines,
+        )
 
     # ---------------------------------------------------------- credit notes
 
@@ -800,7 +871,7 @@ class SalesService:
                 notes=payload.notes,
                 issued_at=datetime.now(UTC),
             )
-            net = tax = ZERO
+            net = tax = cost = ZERO
             for item in sorted(payload.lines, key=lambda entry: entry.invoice_line_id.bytes):
                 line = await self.repository.invoice_line(item.invoice_line_id, for_update=True)
                 if line is None or line.invoice_id != invoice.id:
@@ -849,14 +920,43 @@ class SalesService:
                             reference_type="credit_note",
                             reference_id=note.id,
                         )
+                        # Same reasoning as the inventory movement above: the
+                        # cost reversal uses the current average, not the
+                        # original invoice line's price, since the invoice
+                        # never snapshotted a cost to reverse against.
+                        cost += item.quantity * product.cost_price
 
             note.net_amount, note.tax_amount, note.total_amount = net, tax, net + tax
             self.repository.add(note)
             note.credit_note_number = await NumberAllocator(
                 self.session, self.context.tenant_id
             ).allocate("credit_note", self._period())
+            await self._post_credit_note(note, cost)
             self.audit.record(self.context, events.CREDIT_NOTE_ISSUED, "credit_note", note.id)
             return note
+
+    async def _post_credit_note(self, note: CreditNote, cost: Decimal) -> None:
+        """ACCOUNTING.md §3.7."""
+        revenue_lines, cost_lines = sales_return(note.net_amount, note.tax_amount, cost)
+        accounting = AccountingService(self.session, self.context)
+        if note.net_amount + note.tax_amount > ZERO:
+            await accounting.post(
+                entry_date=note.issue_date,
+                description=f"Credit note {note.credit_note_number}",
+                source_type="credit_note",
+                source_id=note.id,
+                event_type="CREDIT_NOTE_REVENUE",
+                lines=revenue_lines,
+            )
+        if cost_lines is not None:
+            await accounting.post(
+                entry_date=note.issue_date,
+                description=f"Credit note COGS reversal {note.credit_note_number}",
+                source_type="credit_note",
+                source_id=note.id,
+                event_type="CREDIT_NOTE_COGS",
+                lines=cost_lines,
+            )
 
     # ------------------------------------------------------------- reporting
 

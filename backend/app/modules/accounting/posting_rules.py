@@ -12,6 +12,15 @@ class PostingLine:
     description: str | None = None
 
 
+def cogs_recognition(cost: Decimal) -> list[PostingLine]:
+    """COGS DR / Inventory CR — the pair every cost-recognition entry in this
+    system reduces to. Used directly where cost is recognised on its own
+    (a sales fulfillment, decoupled in time from invoice revenue); `cash_sale`
+    and `pos_refund` below inline the same two lines because they return it
+    paired with a revenue entry from the same call."""
+    return [PostingLine("COGS", debit=cost), PostingLine("INVENTORY", credit=cost)]
+
+
 def cash_sale(
     net: Decimal, tax: Decimal, cost: Decimal
 ) -> tuple[list[PostingLine], list[PostingLine]]:
@@ -64,3 +73,28 @@ def pos_refund(
         if restock and cost
         else None
     )
+
+
+def goods_receipt(cost: Decimal) -> list[PostingLine]:
+    """ACCOUNTING.md §3.4. Receipt and bill are deliberately separate events
+    — goods often arrive before the invoice, and GRNI is the standard bridge
+    so inventory is never misstated waiting on paperwork."""
+    return [PostingLine("INVENTORY", debit=cost), PostingLine("GRNI", credit=cost)]
+
+
+def supplier_bill(goods_cost: Decimal, tax: Decimal) -> list[PostingLine]:
+    """ACCOUNTING.md §3.5. Clears the GRNI bridge and recognises the
+    liability and reclaimable input VAT."""
+    lines = [PostingLine("GRNI", debit=goods_cost)]
+    if tax:
+        lines.append(PostingLine("VAT_INPUT", debit=tax))
+    lines.append(PostingLine("AP_CONTROL", credit=goods_cost + tax))
+    return lines
+
+
+def supplier_payment(amount: Decimal, *, cash: bool) -> list[PostingLine]:
+    """ACCOUNTING.md §3.6."""
+    return [
+        PostingLine("AP_CONTROL", debit=amount),
+        PostingLine("CASH" if cash else "BANK", credit=amount),
+    ]

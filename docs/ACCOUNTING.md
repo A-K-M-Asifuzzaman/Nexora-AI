@@ -59,6 +59,7 @@ is_system, currency, is_active`.
 1500 Fixed Assets
 2000 LIABILITIES
   2100 Accounts Payable            system: AP_CONTROL
+  2150 Goods Received Not Invoiced system: GRNI
   2200 Output VAT Payable          system: VAT_OUTPUT
   2300 Accrued Liabilities
 3000 EQUITY
