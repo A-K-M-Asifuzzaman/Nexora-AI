@@ -174,9 +174,21 @@ def test_documented_derivations_are_allowed() -> None:
     assert ungrounded("Gross profit was 400.00 on revenue of 1000.00.", results) == []
 
 
-def test_small_integers_in_prose_are_not_treated_as_claims() -> None:
+def test_a_real_list_length_grounds_ordinary_counting_language() -> None:
+    """ "The top 5 products" is grounded because a tool actually returned 5
+    items — not exempted by magnitude regardless of what a tool returned."""
+    results = [{"items": [{"name": f"Product {i}"} for i in range(5)]}]
+    assert ungrounded("Here are the top 5 products.", results) == []
+
+
+def test_no_number_is_exempt_by_magnitude() -> None:
+    """The threshold this used to have ("ignore anything under 10") is
+    exactly the gap CLAUDE.md's "never invents a financial number" rule
+    exists to close — a hallucinated $7.99 or 3% discount is as real a
+    claim as a hallucinated $70,000, and must be caught the same way."""
     results = [{"revenue": "1000.00"}]
-    assert ungrounded("Here are the top 5 products across 3 branches.", results) == []
+    assert ungrounded("The service fee was 7.99.", results) == [Decimal("7.99")]
+    assert ungrounded("A 3 percent discount applied.", results) == [Decimal("3")]
 
 
 def test_an_answer_with_no_tool_results_still_flags_invented_figures() -> None:

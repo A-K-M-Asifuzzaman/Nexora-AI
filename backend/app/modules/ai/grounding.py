@@ -15,11 +15,6 @@ from typing import Any
 # a false negative ships an invented figure.
 NUMERIC = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 
-# Small integers are pervasive in ordinary prose ("the top 5 products", "over
-# 3 branches") and carry no financial claim. Requiring them to appear in tool
-# output would fail every well-formed answer.
-IGNORED_BELOW = Decimal("10")
-
 
 def _to_decimal(raw: str) -> Decimal | None:
     try:
@@ -42,6 +37,12 @@ def _flatten(payload: Any, into: set[Decimal]) -> None:
         for value in payload.values():
             _flatten(value, into)
     elif isinstance(payload, list):
+        # A returned list's length is itself a grounded figure — "the top 5
+        # products" is a true count of what a tool actually returned, not a
+        # financial claim, and this is what lets ordinary counting language
+        # pass without a blanket exemption for every small number (below,
+        # that used to also wave through an invented "$7.99" or "3%").
+        into.add(Decimal(len(payload)))
         for value in payload:
             _flatten(value, into)
     elif isinstance(payload, bool):
@@ -77,14 +78,19 @@ def grounded_numbers(tool_results: list[Any]) -> set[Decimal]:
 
 
 def ungrounded(answer: str, tool_results: list[Any]) -> list[Decimal]:
-    """Numbers asserted in the answer that the tool results cannot support."""
+    """Numbers asserted in the answer that the tool results cannot support.
+
+    No magnitude is exempt (CLAUDE.md: "the AI never invents a financial
+    number" — unconditional, and a $7.99 or 3% figure is exactly as real a
+    claim as $70,000). Ordinary counting language ("the top 5 products")
+    still passes on its own merits, via `grounded_numbers` admitting the
+    length of every list a tool actually returned.
+    """
     allowed = grounded_numbers(tool_results)
     # Compare on normalised values so "1,150.00" matches 1150.
     allowed_normalised = {v.normalize() for v in allowed}
     offenders = []
     for value in numbers_in(answer):
-        if abs(value) < IGNORED_BELOW:
-            continue
         if value.normalize() not in allowed_normalised:
             offenders.append(value)
     return sorted(offenders)
