@@ -15,11 +15,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
+from app.core.ids import uuid7
 from app.db.base import import_all_models
 from app.modules.notifications.email import CollectingEmailSender, Message, render
 from app.modules.outbox.dispatcher import OutboxDispatcher
 from app.modules.outbox.models import OutboxEvent
 from app.modules.outbox.service import OutboxService
+from app.modules.tenancy.models import Tenant
 
 pytestmark = pytest.mark.skipif(not os.getenv("DATABASE_URL"), reason="DATABASE_URL not configured")
 
@@ -76,6 +78,26 @@ async def _queue(session: AsyncSession, template: str = "password_reset") -> Out
         )
         await session.flush()
     return event
+
+
+async def _tenant(session: AsyncSession) -> uuid.UUID:
+    """`outbox_events.tenant_id` has a real foreign key to `tenants` — a
+    document-index event needs an actual tenant row, unlike email events,
+    which are tenant-less."""
+    tenant_id = uuid7()
+    async with session.begin():
+        session.add(
+            Tenant(
+                id=tenant_id,
+                name=f"Outbox Test {tenant_id}",
+                # The full UUID, not a truncated prefix: uuid7's leading bits
+                # are time-based, so two calls in the same millisecond would
+                # otherwise collide on the unique slug constraint.
+                slug=f"outbox-test-{tenant_id}",
+                base_currency="USD",
+            )
+        )
+    return tenant_id
 
 
 async def _reload(session: AsyncSession, event_id: uuid.UUID) -> OutboxEvent:
@@ -182,6 +204,68 @@ async def test_exhausted_rows_stop_being_retried(session: AsyncSession) -> None:
     async with session.begin():
         await OutboxDispatcher(session, settings, sender).drain()
     assert sender.attempts == 0, "an exhausted row must not be claimed again"
+
+
+async def test_a_document_index_row_calls_the_injected_indexer(session: AsyncSession) -> None:
+    """The route stages this instead of calling `index_document.delay`
+    directly, so a crash between committing the document and enqueuing the
+    task can no longer leave it PENDING forever (ADR-0020)."""
+    tenant_id = await _tenant(session)
+    document_id = uuid.uuid4()
+    async with session.begin():
+        OutboxService(session).enqueue_document_index(tenant_id, document_id)
+        await session.flush()
+
+    calls: list[tuple[str, str]] = []
+    async with session.begin():
+        sent = await OutboxDispatcher(
+            session,
+            get_settings(),
+            CollectingEmailSender(),
+            document_indexer=lambda t, d: calls.append((t, d)),
+        ).drain()
+    assert sent >= 1
+    assert (str(tenant_id), str(document_id)) in calls
+
+
+async def test_a_document_index_failure_retries_like_any_other_row(
+    session: AsyncSession,
+) -> None:
+    tenant_id = await _tenant(session)
+    document_id = uuid.uuid4()
+    async with session.begin():
+        event = OutboxService(session).enqueue_document_index(tenant_id, document_id)
+        await session.flush()
+
+    def exploding_indexer(tenant: str, document: str) -> None:
+        raise RuntimeError("broker unavailable")
+
+    async with session.begin():
+        sent = await OutboxDispatcher(
+            session, get_settings(), CollectingEmailSender(), document_indexer=exploding_indexer
+        ).drain()
+    assert sent == 0
+
+    row = await _reload(session, event.id)
+    assert row.sent_at is None
+    assert row.attempts >= 1
+
+
+async def test_an_unroutable_topic_fails_rather_than_being_silently_dropped(
+    session: AsyncSession,
+) -> None:
+    event_id = uuid.uuid4()
+    async with session.begin():
+        session.add(OutboxEvent(id=event_id, tenant_id=None, topic="not.a.real.topic", payload={}))
+        await session.flush()
+
+    async with session.begin():
+        sent = await OutboxDispatcher(session, get_settings(), CollectingEmailSender()).drain()
+    assert sent == 0
+
+    row = await _reload(session, event_id)
+    assert row.sent_at is None
+    assert row.last_error is not None and "not.a.real.topic" in row.last_error
 
 
 def test_render_rejects_an_unknown_template() -> None:

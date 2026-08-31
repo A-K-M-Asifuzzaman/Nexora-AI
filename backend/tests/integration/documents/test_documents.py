@@ -8,7 +8,13 @@ from uuid import UUID
 
 import httpx
 import pytest
+from sqlalchemy import select, update
 
+from app.core.clock import clock
+from app.core.config import get_settings
+from app.modules.notifications.email import CollectingEmailSender
+from app.modules.outbox.dispatcher import OutboxDispatcher
+from app.modules.outbox.models import OutboxEvent
 from tests.integration.conftest import tenant_headers
 from tests.integration.documents.conftest import index_now, system_context, upload_document
 
@@ -149,6 +155,55 @@ class TestLifecycle:
         assert (
             await client.get(f"/api/v1/documents/{document_id}", headers=headers)
         ).status_code == 404
+
+    async def test_upload_stages_an_outbox_event_that_drives_indexing(
+        self, client: httpx.AsyncClient, db_session
+    ) -> None:
+        """`POST /documents` used to commit the row and then call
+        `index_document.delay` directly — a crash between those two lines
+        left the document PENDING with nothing left to retry it. It now
+        stages a `documents.index` outbox row on the same transaction as the
+        document (ADR-0020), so this proves the row actually lands unsent,
+        and that draining it reaches the indexer with the right arguments.
+        """
+        headers = await _owner(client)
+        me = (await client.get("/api/v1/auth/me", headers=headers)).json()
+        tenant_id = me["active_tenant_id"]
+
+        # Retire whatever backlog other suites left behind: `drain` claims
+        # the oldest unsent rows first, and this suite runs serially, so
+        # without this the batch fills with older rows before it ever
+        # reaches this test's own event.
+        await db_session.execute(
+            update(OutboxEvent)
+            .where(OutboxEvent.sent_at.is_(None))
+            .values(sent_at=clock.now())
+            .execution_options(skip_tenant_filter=True)
+        )
+
+        document = await upload_document(client, headers, title="Outbox proof")
+        document_id = str(document["id"])
+
+        row = await db_session.scalar(
+            select(OutboxEvent)
+            .where(OutboxEvent.topic == "documents.index")
+            .where(OutboxEvent.payload["document_id"].astext == document_id)
+            .execution_options(skip_tenant_filter=True)
+        )
+        assert row is not None, "upload must stage the indexing event, not enqueue it directly"
+        assert row.sent_at is None
+        assert row.payload["tenant_id"] == tenant_id
+
+        calls: list[tuple[str, str]] = []
+        # `db_session` already auto-began a transaction for the SELECT above.
+        sent = await OutboxDispatcher(
+            db_session,
+            get_settings(),
+            CollectingEmailSender(),
+            document_indexer=lambda t, d: calls.append((t, d)),
+        ).drain()
+        assert sent >= 1
+        assert (tenant_id, document_id) in calls
 
     async def test_reindex_replaces_rather_than_duplicates(
         self, client: httpx.AsyncClient, db_session, documents_settings

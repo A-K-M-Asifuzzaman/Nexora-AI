@@ -15,6 +15,7 @@ rather than retried forever — an address that is permanently invalid should st
 consuming the queue and become visible instead.
 """
 
+from collections.abc import Callable
 from datetime import timedelta
 
 import structlog
@@ -25,18 +26,47 @@ from app.core.clock import clock
 from app.core.config import Settings
 from app.modules.notifications.email import EmailSender, render
 from app.modules.outbox.models import OutboxEvent
+from app.modules.outbox.service import TOPIC_DOCUMENT_INDEX, TOPIC_EMAIL
 
 logger = structlog.get_logger(__name__)
 
 BACKOFF_BASE_SECONDS = 30
 BACKOFF_MAX_SECONDS = 3600
 
+# (tenant_id, document_id) -> enqueue the existing Celery indexing task. Kept
+# as a plain callable, not a call baked into this module, so tests can drain
+# a `documents.index` row without a Celery broker.
+DocumentIndexer = Callable[[str, str], None]
+
+
+def _enqueue_index_task(tenant_id: str, document_id: str) -> None:
+    from app.workers.tasks.documents import index_document
+
+    index_document.delay(tenant_id, document_id)
+
 
 class OutboxDispatcher:
-    def __init__(self, session: AsyncSession, settings: Settings, sender: EmailSender) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        sender: EmailSender,
+        document_indexer: DocumentIndexer = _enqueue_index_task,
+    ) -> None:
         self.session = session
         self.settings = settings
         self.sender = sender
+        self.document_indexer = document_indexer
+
+    def _dispatch(self, event: OutboxEvent) -> None:
+        if event.topic == TOPIC_EMAIL:
+            self.sender.send(render(event.payload))
+        elif event.topic == TOPIC_DOCUMENT_INDEX:
+            self.document_indexer(event.payload["tenant_id"], event.payload["document_id"])
+        else:
+            # An unroutable row must fail loudly, the same as a bad address —
+            # silently dropping it would be worse than the retry it costs.
+            raise ValueError(f"Unknown outbox topic: {event.topic!r}")
 
     async def drain(self) -> int:
         """Dispatch one batch. Returns the number of rows successfully sent."""
@@ -60,7 +90,7 @@ class OutboxDispatcher:
         for event in claimed:
             event.attempts += 1
             try:
-                self.sender.send(render(event.payload))
+                self._dispatch(event)
             except Exception as exc:  # noqa: BLE001 -- one bad row must not stop the batch
                 event.last_error = f"{type(exc).__name__}: {exc}"[:500]
                 event.available_at = now + timedelta(seconds=self._backoff(event.attempts))

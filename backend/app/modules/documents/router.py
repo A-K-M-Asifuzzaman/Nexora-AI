@@ -21,6 +21,7 @@ from app.modules.documents.schemas import (
 from app.modules.documents.service import DocumentService
 from app.modules.documents.storage import DocumentStorage
 from app.modules.documents.vector_store import TenantVectorStore
+from app.modules.outbox.service import OutboxService
 from app.modules.rbac.permissions import Perm
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -30,6 +31,28 @@ Upload = Annotated[TenantContext, Depends(RequirePermission(Perm.DOCUMENTS_UPLOA
 Delete = Annotated[TenantContext, Depends(RequirePermission(Perm.DOCUMENTS_DELETE))]
 Db = Annotated[AsyncSession, Depends(get_db)]
 Config = Annotated[Settings, Depends(get_settings)]
+
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+async def _read_bounded(file: UploadFile, max_bytes: int) -> bytes:
+    """Stream the upload in fixed chunks, rejecting it the moment the cap is
+    exceeded — `service.upload`'s own size check runs only after the whole
+    body is already in memory, which bounds nothing for a request that never
+    reaches it (a multi-GB upload would be fully buffered first)."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise AppError(
+                "DOCUMENT_TOO_LARGE", f"Documents are limited to {max_bytes} bytes.", 413
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 class _LazyEmbedder:
@@ -87,20 +110,22 @@ async def upload_document(
     for the list to show INDEXED. Returning 201 would claim the document is
     ready to search, which it is not.
     """
+    data = await _read_bounded(file, settings.document_max_bytes)
     document = await build_service(session, context, settings).upload(
         filename=file.filename or "document",
         content_type=file.content_type or "application/octet-stream",
-        data=await file.read(),
+        data=data,
         title=title,
         visibility=visibility,
         role_ids=role_ids or [],
     )
+    # Staged on this same transaction (ADR-0020): the enqueue commits with the
+    # document row or not at all, so a crash between "row committed" and "task
+    # enqueued" — which used to leave a document PENDING forever with nothing
+    # left to retry it — cannot happen. The outbox drain picks it up next
+    # cycle and calls `index_document.delay` itself.
+    OutboxService(session).enqueue_document_index(context.tenant_id, document.id)
     await session.commit()
-    # Enqueued after commit: a task that starts before the row is visible finds
-    # nothing and fails permanently.
-    from app.workers.tasks.documents import index_document
-
-    index_document.delay(str(context.tenant_id), str(document.id))
     return DocumentResponse.model_validate(document)
 
 
@@ -113,10 +138,8 @@ async def reindex_document(
     """Re-run extraction/chunking/embedding. Permission `documents.upload`:
     re-processing a document is a write, not a read."""
     document = await build_service(session, context, settings).mark_pending_for_reindex(document_id)
+    OutboxService(session).enqueue_document_index(context.tenant_id, document.id)
     await session.commit()
-    from app.workers.tasks.documents import index_document
-
-    index_document.delay(str(context.tenant_id), str(document.id))
     return DocumentResponse.model_validate(document)
 
 
