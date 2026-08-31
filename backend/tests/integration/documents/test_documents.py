@@ -11,7 +11,9 @@ import pytest
 from sqlalchemy import select, update
 
 from app.core.clock import clock
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
+from app.modules.ai.provider import ProviderUnavailableError
+from app.modules.documents import router as documents_router
 from app.modules.notifications.email import CollectingEmailSender
 from app.modules.outbox.dispatcher import OutboxDispatcher
 from app.modules.outbox.models import OutboxEvent
@@ -262,3 +264,28 @@ class TestLifecycle:
         fetched = (await client.get(f"/api/v1/documents/{document_id}", headers=headers)).json()
         assert fetched["status"] == "FAILED"
         assert fetched["failure_reason"]
+
+
+async def test_search_without_a_configured_provider_degrades_to_a_clean_503(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_fake_search_provider` (autouse, above) covers every other test in
+    this file with a working embedder. Undone here specifically, to prove
+    that the real "no API key configured" path — the actual production
+    state until a deployment adds one — degrades to a clean, structured
+    error through the generic `AppError` handler, not an unhandled 500.
+    List/get/upload/delete don't need an embedder at all (`_LazyEmbedder`);
+    search is the one operation that genuinely cannot proceed without one.
+    """
+
+    def _unavailable(_settings: Settings) -> None:
+        raise ProviderUnavailableError("OPENAI_API_KEY is not configured.")
+
+    monkeypatch.setattr(documents_router, "build_provider", _unavailable)
+
+    headers = await _owner(client)
+    response = await client.post(
+        "/api/v1/documents/search", headers=headers, json={"query": "anything", "limit": 5}
+    )
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "AI_PROVIDER_UNAVAILABLE"
