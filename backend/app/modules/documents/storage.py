@@ -69,7 +69,17 @@ class DocumentStorage:
         def _create() -> None:
             try:
                 self._client.head_bucket(Bucket=self._bucket)
-            except ClientError:
+            except ClientError as exc:
+                # HEAD responses carry no body, so botocore reports the bare
+                # HTTP status as the error code here rather than a named one
+                # — "404" is what a missing bucket actually looks like.
+                # Anything else (403 on a bucket that exists but this
+                # credential can't HEAD, a throttled request, a network
+                # blip) must not be papered over by attempting to create a
+                # bucket that may already exist under someone else's grant.
+                code = exc.response.get("Error", {}).get("Code", "")
+                if code not in ("404", "NoSuchBucket"):
+                    raise
                 self._client.create_bucket(Bucket=self._bucket)
 
         # boto3 is synchronous; running it inline would block the event loop for
