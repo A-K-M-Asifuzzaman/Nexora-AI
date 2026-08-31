@@ -38,9 +38,16 @@ async def limited_client() -> AsyncIterator[httpx.AsyncClient]:
     settings = get_settings().model_copy(
         update={"rate_limit_enabled": True, "refresh_cookie_secure": False}
     )
-    transport = httpx.ASGITransport(app=create_app(settings))
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
-        yield c
+    app = create_app(settings)
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+            yield c
+    finally:
+        # See tests/integration/conftest.py's `client` fixture: ASGITransport
+        # never runs the app's lifespan shutdown, so these leak otherwise.
+        await app.state.engine.dispose()
+        await app.state.redis.aclose()
 
 
 def _email() -> str:

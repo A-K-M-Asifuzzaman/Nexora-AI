@@ -49,9 +49,21 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
     settings = get_settings().model_copy(
         update={"rate_limit_enabled": False, "refresh_cookie_secure": False}
     )
-    transport = httpx.ASGITransport(app=create_app(settings))
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
-        yield c
+    app = create_app(settings)
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+            yield c
+    finally:
+        # `ASGITransport` never sends the ASGI lifespan events `TestClient`
+        # would (only `test_application_startup.py`'s own `with
+        # TestClient(app):` triggers `create_app`'s shutdown, which is where
+        # the engine and Redis client actually close) — every one of the
+        # ~400+ tests using this fixture was leaking one of each until this,
+        # eventually exhausting Postgres's connection limit in CI once the
+        # suite grew large enough to hit it.
+        await app.state.engine.dispose()
+        await app.state.redis.aclose()
 
 
 @pytest.fixture
