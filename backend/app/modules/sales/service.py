@@ -78,6 +78,8 @@ from app.modules.sales.schemas import (
     QuotationCreate,
     SalesOrderCreate,
 )
+from app.modules.vat.models import VatDirection
+from app.modules.vat.service import VatService, group_taxable_lines
 
 ZERO = Decimal("0")
 
@@ -89,6 +91,7 @@ class SalesService:
         self.repository = SalesRepository(session)
         self.audit = AuditService(session)
         self.inventory = InventoryService(session, context)
+        self.vat = VatService(session, context)
 
     async def _set_tenant(self) -> None:
         await self.session.execute(
@@ -654,6 +657,7 @@ class SalesService:
                 self.session, self.context.tenant_id
             ).allocate("invoice", self._period())
             await self._post_invoice(invoice)
+            await self._record_vat_for_invoice(invoice)
             self.audit.record(
                 self.context,
                 events.INVOICE_ISSUED,
@@ -683,6 +687,24 @@ class SalesService:
             event_type="INVOICE_ISSUED",
             lines=lines,
         )
+
+    async def _record_vat_for_invoice(self, invoice: Invoice) -> None:
+        """A VAT return is prepared from the register, not the journal — the
+        journal's VAT_OUTPUT line above is one blended figure, but an invoice
+        mixing rated and zero-rated lines needs one register row per rate."""
+        lines = await self.repository.invoice_lines(invoice.id)
+        for rate, net, tax in group_taxable_lines(
+            (line.tax_rate, line.net_amount, line.tax_amount) for line in lines
+        ):
+            await self.vat.record(
+                direction=VatDirection.OUTPUT,
+                occurred_on=invoice.issue_date,
+                source_type="invoice",
+                source_id=invoice.id,
+                taxable_amount=net,
+                vat_amount=tax,
+                rate=rate,
+            )
 
     async def get_invoice(self, invoice_id: UUID) -> tuple[Invoice, list[InvoiceLine]]:
         async with service_transaction(self.session):
@@ -872,6 +894,7 @@ class SalesService:
                 issued_at=datetime.now(UTC),
             )
             net = tax = cost = ZERO
+            rate_lines: list[tuple[Decimal, Decimal, Decimal]] = []
             for item in sorted(payload.lines, key=lambda entry: entry.invoice_line_id.bytes):
                 line = await self.repository.invoice_line(item.invoice_line_id, for_update=True)
                 if line is None or line.invoice_id != invoice.id:
@@ -903,6 +926,7 @@ class SalesService:
                 )
                 net += line_net
                 tax += line_tax
+                rate_lines.append((line.tax_rate, line_net, line_tax))
 
                 if payload.restock and payload.warehouse_id is not None:
                     product = await self._product(line.product_id)
@@ -932,6 +956,7 @@ class SalesService:
                 self.session, self.context.tenant_id
             ).allocate("credit_note", self._period())
             await self._post_credit_note(note, cost)
+            await self._record_vat_for_credit_note(note, rate_lines)
             self.audit.record(self.context, events.CREDIT_NOTE_ISSUED, "credit_note", note.id)
             return note
 
@@ -956,6 +981,23 @@ class SalesService:
                 source_id=note.id,
                 event_type="CREDIT_NOTE_COGS",
                 lines=cost_lines,
+            )
+
+    async def _record_vat_for_credit_note(
+        self, note: CreditNote, rate_lines: list[tuple[Decimal, Decimal, Decimal]]
+    ) -> None:
+        """A reversal, not a fresh OUTPUT event — `is_reversal` flips the
+        register's sign so the note's period nets against the invoice's."""
+        for rate, net, tax in group_taxable_lines(rate_lines):
+            await self.vat.record(
+                direction=VatDirection.OUTPUT,
+                occurred_on=note.issue_date,
+                source_type="credit_note",
+                source_id=note.id,
+                taxable_amount=net,
+                vat_amount=tax,
+                rate=rate,
+                is_reversal=True,
             )
 
     # ------------------------------------------------------------- reporting

@@ -48,6 +48,8 @@ from app.modules.pos.schemas import (
     TerminalUpdate,
 )
 from app.modules.sales.money import line_totals, round_money
+from app.modules.vat.models import VatDirection
+from app.modules.vat.service import VatService, group_taxable_lines
 
 ZERO = Decimal("0")
 
@@ -59,6 +61,7 @@ class PosService:
         self.repository = PosRepository(session)
         self.inventory = InventoryService(session, context)
         self.audit = AuditService(session)
+        self.vat = VatService(session, context)
 
     async def _set_tenant(self) -> None:
         await self.session.execute(
@@ -347,6 +350,7 @@ class PosService:
             )
             self.repository.add(receipt)
             await self._post_sale(sale)
+            await self._record_vat_for_sale(sale, lines)
             self.audit.record(self.context, events.SALE_COMPLETED, "sale", sale.id)
             await idempotency.complete(
                 endpoint="POST /pos/checkout",
@@ -386,6 +390,24 @@ class PosService:
                 lines=cost_lines,
             )
 
+    async def _record_vat_for_sale(self, sale: Sale, lines: list[SaleLine]) -> None:
+        """A VAT return is prepared from the register, not the journal — the
+        journal's VAT_OUTPUT line above is one blended figure, but a sale
+        mixing rated and zero-rated lines needs one register row per rate,
+        since `VatService.prepare_return` sums the register by rate."""
+        for rate, net, tax in group_taxable_lines(
+            (line.tax_rate, line.net_amount, line.tax_amount) for line in lines
+        ):
+            await self.vat.record(
+                direction=VatDirection.OUTPUT,
+                occurred_on=sale.occurred_at.date(),
+                source_type="pos_sale",
+                source_id=sale.id,
+                taxable_amount=net,
+                vat_amount=tax,
+                rate=rate,
+            )
+
     async def _post_refund(
         self, sale_return: SaleReturn, net: Decimal, tax: Decimal, cost: Decimal
     ) -> None:
@@ -415,6 +437,24 @@ class PosService:
                 source_id=sale_return.id,
                 event_type="POS_REFUND_COGS",
                 lines=cost_lines,
+            )
+
+    async def _record_vat_for_refund(
+        self, sale_return: SaleReturn, rate_lines: list[tuple[Decimal, Decimal, Decimal]]
+    ) -> None:
+        """A reversal, not a fresh OUTPUT event — `is_reversal` flips the
+        register's sign so the return's period nets against the original
+        sale's, the same relationship the journal keeps between the two."""
+        for rate, net, tax in group_taxable_lines(rate_lines):
+            await self.vat.record(
+                direction=VatDirection.OUTPUT,
+                occurred_on=sale_return.occurred_at.date(),
+                source_type="pos_return",
+                source_id=sale_return.id,
+                taxable_amount=net,
+                vat_amount=tax,
+                rate=rate,
+                is_reversal=True,
             )
 
     async def hold(self, payload: HoldCreate) -> HeldSale:
@@ -484,6 +524,7 @@ class PosService:
             if any(item.sale_line_id not in by_id for item in payload.lines):
                 raise NotFoundError()
             total = refund_net = refund_tax = refund_cost = ZERO
+            rate_lines: list[tuple[Decimal, Decimal, Decimal]] = []
             sale_return = SaleReturn(
                 id=uuid7(),
                 tenant_id=self.context.tenant_id,
@@ -514,9 +555,12 @@ class PosService:
                 # change still reverses exactly what the original sale
                 # recognised (ACCOUNTING.md §3.7: "restock uses the original
                 # sale's cost, not the current average cost").
-                refund_net += round_money(line.net_amount * item.quantity / line.quantity)
-                refund_tax += round_money(line.tax_amount * item.quantity / line.quantity)
+                line_refund_net = round_money(line.net_amount * item.quantity / line.quantity)
+                line_refund_tax = round_money(line.tax_amount * item.quantity / line.quantity)
+                refund_net += line_refund_net
+                refund_tax += line_refund_tax
                 refund_cost += line.unit_cost * item.quantity
+                rate_lines.append((line.tax_rate, line_refund_net, line_refund_tax))
                 line.refunded_quantity += item.quantity
                 self.repository.add(
                     SaleReturnLine(
@@ -545,6 +589,7 @@ class PosService:
                 self.session, self.context.tenant_id
             ).allocate("pos_return", str(sale_return.occurred_at.year))
             await self._post_refund(sale_return, refund_net, refund_tax, refund_cost)
+            await self._record_vat_for_refund(sale_return, rate_lines)
             self.audit.record(self.context, events.SALE_REFUNDED, "sale_return", sale_return.id)
             await idempotency.complete(
                 endpoint="POST /pos/refunds",

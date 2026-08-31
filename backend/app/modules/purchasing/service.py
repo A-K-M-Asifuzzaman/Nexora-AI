@@ -54,6 +54,8 @@ from app.modules.purchasing.schemas import (
 )
 from app.modules.sales.models import Payment, PaymentAllocation, PaymentDirection, PaymentMethod
 from app.modules.sales.money import line_totals, round_money
+from app.modules.vat.models import VatDirection
+from app.modules.vat.service import VatService, group_taxable_lines
 
 ZERO = Decimal("0")
 
@@ -65,6 +67,7 @@ class PurchasingService:
         self.repository = PurchasingRepository(session)
         self.audit = AuditService(session)
         self.inventory = InventoryService(session, context)
+        self.vat = VatService(session, context)
 
     async def _set_tenant(self) -> None:
         await self.session.execute(
@@ -421,6 +424,7 @@ class PurchasingService:
                 "supplier_bill", self._period()
             )
             await self._post_bill(bill)
+            await self._record_vat_for_bill(bill)
             self.audit.record(
                 self.context,
                 events.SUPPLIER_BILL_ISSUED,
@@ -441,6 +445,24 @@ class PurchasingService:
             event_type="SUPPLIER_BILL_ISSUED",
             lines=supplier_bill(bill.net_amount, bill.tax_amount),
         )
+
+    async def _record_vat_for_bill(self, bill: SupplierBill) -> None:
+        """A VAT return is prepared from the register, not the journal — the
+        journal's VAT_INPUT line above is one blended figure, but a bill
+        mixing rated and zero-rated lines needs one register row per rate."""
+        lines = await self.repository.bill_lines(bill.id)
+        for rate, net, tax in group_taxable_lines(
+            (line.tax_rate, line.net_amount, line.tax_amount) for line in lines
+        ):
+            await self.vat.record(
+                direction=VatDirection.INPUT,
+                occurred_on=bill.issue_date,
+                source_type="supplier_bill",
+                source_id=bill.id,
+                taxable_amount=net,
+                vat_amount=tax,
+                rate=rate,
+            )
 
     async def get_bill(self, bill_id: UUID) -> tuple[SupplierBill, list[SupplierBillLine]]:
         async with service_transaction(self.session):

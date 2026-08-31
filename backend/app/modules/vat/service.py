@@ -1,5 +1,6 @@
 """VAT service: rate resolution, the register, and periodic returns."""
 
+from collections.abc import Iterable
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -25,6 +26,23 @@ from app.modules.vat.pricing import exclusive, inclusive, quantize
 from app.modules.vat.schemas import PriceQuery, RateCreate, ReturnPrepare
 
 ZERO = Decimal("0")
+
+
+def group_taxable_lines(
+    lines: Iterable[tuple[Decimal, Decimal, Decimal]],
+) -> list[tuple[Decimal, Decimal, Decimal]]:
+    """Sum (net, tax) per distinct rate across a document's lines.
+
+    That's the granularity `VatService.record` needs: one sale, invoice, or
+    bill can mix rates across its lines, but the register — and the return
+    prepared from it — groups by rate, not by document.
+    """
+    grouped: dict[Decimal, list[Decimal]] = {}
+    for rate, net, tax in lines:
+        bucket = grouped.setdefault(rate, [ZERO, ZERO])
+        bucket[0] += net
+        bucket[1] += tax
+    return [(rate, net, tax) for rate, (net, tax) in grouped.items() if net != ZERO or tax != ZERO]
 
 
 class VatService:
@@ -210,10 +228,20 @@ class VatService:
             return vat_return
 
     async def file_return(self, return_id: UUID) -> VatReturn:
-        """Mark a return filed and claim its register rows.
+        """Claim the period's register rows and mark the return filed.
 
         Claiming is what makes a period un-refilable: once a row carries a
-        `vat_return_id`, no later return counts it again.
+        `vat_return_id`, no later return counts it again. But a return can sit
+        in DRAFT for days between `prepare_return` and this call, and the
+        register keeps moving underneath it — a correction posted in the
+        meantime, or a backdated transaction, is still unclaimed and still
+        inside the period, so this claims it too. If the totals stayed frozen
+        at whatever `prepare_return` computed, a filed return's numbers could
+        silently stop matching the rows actually locked to it: the one
+        invariant a filed return cannot lose. So the totals are recomputed
+        here, from exactly the rows this call claims, and overwrite the
+        draft's preview. `prepare_return`'s totals are exactly that — a
+        preview — and are expected to move before filing.
         """
         async with service_transaction(self.session):
             await self._set_tenant()
@@ -238,6 +266,26 @@ class VatService:
                     "end": vat_return.period_end,
                 },
             )
+            totals = (
+                await self.session.execute(
+                    text("""
+                    SELECT
+                      COALESCE(SUM(vat_amount)     FILTER (WHERE direction='OUTPUT'), 0),
+                      COALESCE(SUM(vat_amount)     FILTER (WHERE direction='INPUT'),  0),
+                      COALESCE(SUM(taxable_amount) FILTER (WHERE direction='OUTPUT'), 0),
+                      COALESCE(SUM(taxable_amount) FILTER (WHERE direction='INPUT'),  0)
+                      FROM vat_transactions
+                     WHERE vat_return_id = :return_id
+                """),
+                    {"return_id": vat_return.id},
+                )
+            ).one()
+            output_vat, input_vat, taxable_sales, taxable_purchases = totals
+            vat_return.output_vat = quantize(Decimal(output_vat))
+            vat_return.input_vat = quantize(Decimal(input_vat))
+            vat_return.net_vat = quantize(Decimal(output_vat) - Decimal(input_vat))
+            vat_return.taxable_sales = quantize(Decimal(taxable_sales))
+            vat_return.taxable_purchases = quantize(Decimal(taxable_purchases))
             vat_return.status = VatReturnStatus.FILED
             vat_return.filed_at = datetime.now(UTC)
             vat_return.filed_by_membership_id = self.context.membership_id
