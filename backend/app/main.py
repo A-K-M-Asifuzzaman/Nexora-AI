@@ -82,6 +82,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.redis = redis
+
+    # Routers declare `Depends(get_settings)`. When callers pass an explicit
+    # Settings object to the factory (tests, embedded deployments, future
+    # process-specific entrypoints), those dependencies must resolve the same
+    # object used to build the engine and Redis client. Otherwise a cached
+    # machine-local `.env` value can silently disagree with `app.state`.
+    def application_settings_dependency() -> Settings:
+        return application_settings
+
+    app.dependency_overrides[get_settings] = application_settings_dependency
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(
         CORSMiddleware,

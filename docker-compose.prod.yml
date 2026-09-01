@@ -88,6 +88,20 @@ services:
     command: ["alembic", "upgrade", "head"]
     restart: "no"
 
+  # Opt-in only: the demo overlay enables this profile after migrations. It
+  # deliberately uses the same production image, settings and service-layer
+  # code as real requests; production deployments without `--profile demo`
+  # never start it.
+  seed-demo:
+    profiles: ["demo"]
+    build: {context: ./backend}
+    environment: *backend-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["python", "-m", "scripts.seed_demo"]
+    restart: "no"
+
   backend:
     build: {context: ./backend}
     environment: *backend-environment

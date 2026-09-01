@@ -1,0 +1,40 @@
+name: Deploy demo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexora-demo-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: demo
+    env:
+      DEMO_HOST: ${{ secrets.DEMO_HOST }}
+      DEMO_USER: ${{ secrets.DEMO_USER }}
+      DEMO_SSH_KEY: ${{ secrets.DEMO_SSH_KEY }}
+      DEMO_KNOWN_HOSTS: ${{ secrets.DEMO_KNOWN_HOSTS }}
+    steps:
+      - name: Validate deployment secrets
+        run: |
+          test -n "${DEMO_HOST}"
+          test -n "${DEMO_USER}"
+          test -n "${DEMO_SSH_KEY}"
+          test -n "${DEMO_KNOWN_HOSTS}"
+
+      - name: Configure SSH
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${DEMO_SSH_KEY}" > ~/.ssh/id_ed25519
+          printf '%s\n' "${DEMO_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      - name: Deploy current main branch
+        run: |
+          ssh "${DEMO_USER}@${DEMO_HOST}" \
+            'cd ~/nexora-ai && git fetch origin main && git checkout main && git pull --ff-only origin main && ./infra/demo/deploy.sh'

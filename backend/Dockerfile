@@ -34,6 +34,10 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /app/app ./app
 COPY --from=builder /app/alembic.ini ./
 COPY --from=builder /app/alembic ./alembic
+# Operational scripts are required by the opt-in demo seeding profile. They
+# are not executed by the production API process and do not alter its runtime
+# architecture.
+COPY scripts ./scripts
 
 USER nexora
 EXPOSE 8000

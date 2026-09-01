@@ -1,0 +1,66 @@
+name: nexora-demo
+
+# Additive demo overlay for docker-compose.prod.yml. The production topology
+# remains authoritative and unchanged: API, worker, beat, Postgres, Redis,
+# MinIO, Qdrant, ClamAV, frontend and Caddy still run as separate processes.
+# This file consolidates those services onto one free VM and adds only a local
+# SMTP sink plus conservative memory limits.
+
+services:
+  postgres:
+    mem_limit: 2g
+
+  redis:
+    mem_limit: 768m
+
+  migrate:
+    mem_limit: 768m
+
+  seed-demo:
+    mem_limit: 768m
+
+  backend:
+    mem_limit: 1536m
+    depends_on:
+      mailpit:
+        condition: service_healthy
+
+  worker:
+    mem_limit: 2g
+    depends_on:
+      mailpit:
+        condition: service_healthy
+
+  beat:
+    mem_limit: 768m
+
+  frontend:
+    mem_limit: 1536m
+
+  minio:
+    mem_limit: 1536m
+
+  qdrant:
+    mem_limit: 2g
+
+  clamav:
+    mem_limit: 3g
+
+  caddy:
+    mem_limit: 256m
+
+  # Demo email is captured locally so registration, invitations and password
+  # reset remain functional without purchasing an SMTP relay. It is internal
+  # only; no host port is published and Caddy does not route its web UI.
+  mailpit:
+    image: axllent/mailpit:v1.27.8
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 256m
+    restart: unless-stopped

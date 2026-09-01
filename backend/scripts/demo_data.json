@@ -1,0 +1,42 @@
+{
+  "product_generation": {
+    "count": 500,
+    "sku_prefix": "DEMO-",
+    "categories": [
+      {"name": "Office Essentials", "base_price": "12.50"},
+      {"name": "Computer Accessories", "base_price": "24.90"},
+      {"name": "Displays and AV", "base_price": "149.00"},
+      {"name": "Furniture", "base_price": "189.00"},
+      {"name": "Mobile Accessories", "base_price": "19.90"},
+      {"name": "Networking", "base_price": "39.00"},
+      {"name": "Storage and Supplies", "base_price": "8.75"},
+      {"name": "Wellness", "base_price": "29.50"}
+    ],
+    "name_patterns": [
+      "Professional {category} {number:03}",
+      "Premium {category} {number:03}",
+      "Everyday {category} {number:03}",
+      "Business {category} {number:03}"
+    ]
+  },
+  "featured_products": [
+    {"sku": "SKU-1001", "name": "Wireless Keyboard", "price": "29.99"},
+    {"sku": "SKU-1002", "name": "27-inch Monitor", "price": "219.00"},
+    {"sku": "SKU-1003", "name": "USB-C Dock", "price": "64.50"},
+    {"sku": "SKU-1004", "name": "Ergonomic Chair", "price": "349.00"},
+    {"sku": "SKU-1005", "name": "Noise-Cancelling Headset", "price": "89.90"},
+    {"sku": "SKU-1006", "name": "Mechanical Keyboard", "price": "119.00"},
+    {"sku": "SKU-1007", "name": "4K Webcam", "price": "139.00"},
+    {"sku": "SKU-1008", "name": "Laptop Stand", "price": "44.90"},
+    {"sku": "SKU-1009", "name": "Portable SSD 1TB", "price": "99.00"},
+    {"sku": "SKU-1010", "name": "Wi-Fi 6 Router", "price": "159.00"}
+  ],
+  "counts": {
+    "customers": 250,
+    "suppliers": 120,
+    "leads": 300,
+    "opportunities": 200,
+    "sales_orders": 500,
+    "purchase_orders": 250
+  }
+}

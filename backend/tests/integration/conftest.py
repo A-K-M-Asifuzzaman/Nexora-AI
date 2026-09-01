@@ -46,8 +46,17 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
     # correctly withholds over this fixture's plain-HTTP `testserver` origin,
     # so refresh rotation looked broken in the full suite though the feature
     # was fine. An explicit override is deterministic regardless of test order.
+    # AI is enabled explicitly for the same isolation reason. A developer may
+    # intentionally keep AI_ENABLED=false in backend/.env to avoid paid calls;
+    # document integration tests replace the provider with a deterministic
+    # fake and must exercise search/provider behavior instead of inheriting
+    # that machine-local switch and returning AI_DISABLED before the fake runs.
     settings = get_settings().model_copy(
-        update={"rate_limit_enabled": False, "refresh_cookie_secure": False}
+        update={
+            "rate_limit_enabled": False,
+            "refresh_cookie_secure": False,
+            "ai_enabled": True,
+        }
     )
     app = create_app(settings)
     transport = httpx.ASGITransport(app=app)
