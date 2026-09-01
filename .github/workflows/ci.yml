@@ -24,8 +24,8 @@ jobs:
   backend-quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.12", cache: pip}
       - run: pip install -e './backend[dev]'
       - run: ruff format --check . && ruff check .
@@ -58,8 +58,8 @@ jobs:
       # for real just queues into Redis and nothing ever picks it up.
       CELERY_TASK_ALWAYS_EAGER: "true"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.12", cache: pip}
       - run: pip install -e './backend[dev]'
       - name: Create non-owner application role
@@ -95,8 +95,8 @@ jobs:
           --health-cmd "pg_isready -U nexora_owner -d nexora_test"
           --health-interval 5s --health-timeout 5s --health-retries 12
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.12", cache: pip}
       - run: pip install -e ./backend
       - name: Create application role
@@ -108,8 +108,8 @@ jobs:
   frontend-quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: {node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json}
       - run: npm ci
         working-directory: frontend
@@ -130,8 +130,8 @@ jobs:
     env:
       BFF_REDIS_URL: redis://127.0.0.1:6379/3
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: {node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json}
       - run: npm ci && npm run test
         working-directory: frontend
@@ -139,8 +139,8 @@ jobs:
   frontend-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: {node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json}
       - run: npm ci && npm run build
         working-directory: frontend
@@ -151,22 +151,22 @@ jobs:
       # gitleaks needs real history to diff-scan a push: a shallow (depth-1)
       # checkout only has the latest commit, so it cannot resolve the parent
       # of the oldest commit whenever a push carries more than one.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: {fetch-depth: 0}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: {python-version: "3.12", cache: pip}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: {node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json}
       - run: pip install -e ./backend pip-audit
       - run: pip-audit
       - run: npm ci && npm audit --audit-level=high
         working-directory: frontend
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
 
   e2e-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker compose up -d --build postgres redis migrate backend frontend
       - run: curl --fail --retry 20 --retry-delay 3 --retry-all-errors http://localhost:8000/health
       - run: curl --fail --retry 20 --retry-delay 3 --retry-all-errors http://localhost:3000/
@@ -195,7 +195,7 @@ jobs:
       S3_SECRET_ACCESS_KEY: demo_minio_secret
       ANTIVIRUS_ENABLED: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: bash -n infra/demo/deploy.sh
       - run: >-
           docker compose
