@@ -1,6 +1,6 @@
 # Nexora AI
 
-**AI-Powered Multi-Tenant ERP, POS & Business Intelligence Platform**
+**Multi-Tenant ERP, POS & Business Intelligence Platform**
 
 A production-oriented SaaS platform for small and medium businesses that runs
 operations and books in one system: POS, catalog, inventory, sales, purchasing,
@@ -15,21 +15,25 @@ record, the journal entries and the audit event — or writes none of them.
 
 ## Status
 
-| Phase | State |
-|---|---|
-| 0 — Architecture | ✅ Complete |
-| 1 — Auth · Tenancy · RBAC · Audit | 🔨 Handed off to implementation |
-| 2–12 | Planned — see [`docs/ROADMAP.md`](docs/ROADMAP.md) |
+All 12 phases are complete, migrated, and green in CI: authentication and
+tenancy, catalog and inventory, sales and purchasing, POS, accounting, CRM and
+reporting, VAT, an AI copilot with tenant-scoped RAG, demand forecasting and
+anomaly detection, security hardening (MFA, field encryption, tamper-evident
+audit chaining, virus scanning, rate limiting), and production deployment
+(Docker images, reverse proxy, backup/restore, release pipeline). Full,
+evidence-based exit state for every phase — what was built, what was tested,
+what real bugs were found and fixed — is in
+[`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ---
 
 ## Stack
 
 **Backend** FastAPI · Python 3.12 · Pydantic v2 · SQLAlchemy 2.x · Alembic · PostgreSQL 16
-**Frontend** Next.js (App Router) · TypeScript · Tailwind · shadcn/ui · TanStack Query · Zod
-**Infrastructure** Redis · Celery · Docker Compose · S3-compatible storage · Qdrant
-**AI** Provider abstraction (Anthropic default) · whitelisted analytics tools · tenant-scoped RAG
-**Testing** pytest · pytest-asyncio · Vitest · React Testing Library · Playwright
+**Frontend** Next.js (App Router) · TypeScript · a token-custody BFF proxy layer · react-hook-form + Zod
+**Infrastructure** Redis · Celery (worker + beat) · Docker Compose · S3-compatible storage · Qdrant · ClamAV
+**AI** Provider abstraction (OpenAI/Anthropic) · whitelisted, permission-checked tools · tenant-scoped RAG · grounding checks
+**Testing** pytest · pytest-asyncio · real PostgreSQL (never SQLite) · Vitest · React Testing Library
 
 ---
 
@@ -37,13 +41,14 @@ record, the journal entries and the audit event — or writes none of them.
 
 ```bash
 cp .env.example .env
-# Generate the two required secrets:
+# Generate the required secrets:
 python -c "import secrets; print('JWT_SECRET_KEY=' + secrets.token_urlsafe(48))"
 python -c "import secrets; print('BFF_SESSION_SECRET=' + secrets.token_urlsafe(48))"
+python -c "from cryptography.fernet import Fernet; print('FIELD_ENCRYPTION_KEY=' + Fernet.generate_key().decode())"
 
-docker compose up -d --build
+make up             # docker compose up -d --build
 docker compose exec backend alembic upgrade head
-docker compose exec backend python -m app.cli seed        # reference data + system roles
+make seed-demo       # idempotent — reference data, roles, and a full demo tenant
 ```
 
 | Service | URL |
@@ -54,13 +59,18 @@ docker compose exec backend python -m app.cli seed        # reference data + sys
 | Mail sink | http://localhost:8025 |
 | MinIO console | http://localhost:9001 |
 
+A free, single-host deployment mode — same services, same code, no mocks —
+is documented in [`infra/demo/README.md`](infra/demo/README.md). Real
+production deployment (managed infrastructure, real secrets, monitoring) is
+covered in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
 ## Verification
 
 ```bash
-make format      # ruff format · prettier
+make format      # ruff format
 make lint        # ruff check · eslint
 make typecheck   # mypy · tsc --noEmit
-make test        # pytest · vitest
+make test        # pytest (real Postgres, 80% coverage gate) · vitest
 make build       # next build
 make verify      # all of the above — must pass before any commit
 ```
@@ -112,8 +122,9 @@ Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 | [`docs/ACCOUNTING.md`](docs/ACCOUNTING.md) | Invariants, chart of accounts, posting rules |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, controls, **known gaps** |
 | [`docs/AI.md`](docs/AI.md) | Copilot tools, RAG isolation, ML honesty rules |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | 21 ADRs, each with its cost stated |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phase checklist |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | 23 ADRs, each with its cost stated |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Production deployment, backup/restore, known gaps |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phase-by-phase exit state, evidence-based |
 
 ---
 
