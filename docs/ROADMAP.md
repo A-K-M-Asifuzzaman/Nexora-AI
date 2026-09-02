@@ -264,7 +264,7 @@ paid external service.
 
 **Not built:** the chat UI, and the per-tenant token budget in `AI.md` §6.
 
-## Phase 9 — RAG · `[x]` COMPLETE (pending Codex review)
+## Phase 9 — RAG · `[x]` COMPLETE (pending implementer review)
 - [x] Upload, validation, content-based sniffing, S3 storage
 - [x] Async extract → chunk → embed → index
 - [x] `TenantVectorStore` (sole Qdrant caller)
