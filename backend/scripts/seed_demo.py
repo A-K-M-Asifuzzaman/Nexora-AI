@@ -842,11 +842,15 @@ async def main() -> None:
                         await session.rollback()
 
                 # Reload all products so reruns also operate on existing rows.
+                # Excludes soft-deleted ones (`is_active=False`, e.g. from a
+                # demo operator exercising the delete-product UI) — inventory
+                # rejects posting a receipt against those, so a rerun would
+                # otherwise fail with NotFoundError on a tenant that has any.
                 await _set_rls_tenant(session, tenant_id)
                 product_ids = list(
                     await session.scalars(
                         select(Product.id)
-                        .where(Product.tenant_id == tenant_id)
+                        .where(Product.tenant_id == tenant_id, Product.is_active.is_(True))
                         .order_by(Product.sku)
                     )
                 )
