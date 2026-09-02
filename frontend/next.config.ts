@@ -25,7 +25,15 @@ export const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // "standalone" bundles a self-contained server into .next/standalone —
+  // exactly what the Dockerfile's runtime stage copies out, and what every
+  // docker-compose deployment (dev, demo, prod) runs. Vercel's own build
+  // pipeline produces its own serverless bundle and does not expect this
+  // output mode; forcing it there breaks Vercel's post-build trace step
+  // (ENOENT on next-server.js.nft.json). VERCEL=1 is set automatically by
+  // Vercel's builder, never in a Docker build, so this stays "standalone"
+  // everywhere standalone mode is what actually gets deployed.
+  output: process.env.VERCEL ? undefined : "standalone",
   poweredByHeader: false,
   typedRoutes: true,
   turbopack: { root: process.cwd() },
