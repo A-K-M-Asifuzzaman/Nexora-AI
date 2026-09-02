@@ -17,6 +17,7 @@ from app.modules.pos.models import (
     Sale,
     SaleLine,
     SalePayment,
+    SessionStatus,
 )
 
 
@@ -46,6 +47,18 @@ class PosRepository:
         statement = select(PosSession).where(PosSession.id == session_id)
         if for_update:
             statement = statement.with_for_update()
+        return cast(PosSession | None, await self.session.scalar(statement))
+
+    async def open_session_for_terminal(self, terminal_id: UUID) -> PosSession | None:
+        """The terminal-session uniqueness invariant is enforced by a DB
+        constraint (`open_session` raises `SESSION_ALREADY_OPEN` from an
+        `IntegrityError`, not a query), so this is the only way a caller can
+        discover *which* session that already is — needed to let a client
+        close a session it did not itself open (e.g. left open by another
+        shift, or seeded demo data)."""
+        statement = select(PosSession).where(
+            PosSession.terminal_id == terminal_id, PosSession.status == SessionStatus.OPEN
+        )
         return cast(PosSession | None, await self.session.scalar(statement))
 
     async def product(self, product_id: UUID, *, for_update: bool = False) -> Product | None:

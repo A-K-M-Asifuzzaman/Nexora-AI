@@ -249,6 +249,16 @@ async def test_session_reconciliation_and_one_open_shift_guard(
         json={"terminal_id": ids["terminal_id"], "opening_float": "0.0000"},
     )
     assert duplicate.status_code == 409
+
+    # The 409 above names the conflict but not the session — this is how a
+    # client recovers from it: find the session it collided with, well
+    # enough to close it, rather than being stuck.
+    current = await client.get(
+        f"/api/v1/pos/terminals/{ids['terminal_id']}/session", headers=headers
+    )
+    assert current.status_code == 200, current.text
+    assert current.json()["id"] == ids["session_id"]
+
     await checkout(client, headers, ids)
     closed = await client.post(
         f"/api/v1/pos/sessions/{ids['session_id']}/close",
@@ -258,3 +268,11 @@ async def test_session_reconciliation_and_one_open_shift_guard(
     assert closed.status_code == 200, closed.text
     assert closed.json()["expected_cash"] == "111.0000"
     assert closed.json()["cash_variance"] == "0.0000"
+
+    # No open session left — a client polling this after close must not be
+    # told the just-closed one is still open.
+    after_close = await client.get(
+        f"/api/v1/pos/terminals/{ids['terminal_id']}/session", headers=headers
+    )
+    assert after_close.status_code == 200, after_close.text
+    assert after_close.json() is None

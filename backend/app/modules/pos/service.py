@@ -108,6 +108,16 @@ class PosService:
             await self._set_tenant()
             return await self.repository.terminals(self.context.branch_ids)
 
+    async def current_session(self, terminal_id: UUID) -> PosSession | None:
+        """A client cannot tell from `open_session`'s 409 alone *which*
+        session already has the terminal (see `open_session_for_terminal`'s
+        docstring) — this lets it find and close one it did not itself
+        open, rather than being stuck."""
+        async with service_transaction(self.session):
+            await self._set_tenant()
+            await self._terminal(terminal_id)
+            return await self.repository.open_session_for_terminal(terminal_id)
+
     async def create_terminal(self, payload: TerminalCreate) -> PosTerminal:
         try:
             async with service_transaction(self.session):

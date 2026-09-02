@@ -74,6 +74,17 @@ async def update_terminal(
     )
 
 
+@router.get("/terminals/{terminal_id}/session", response_model=SessionResponse | None)
+async def current_session(
+    terminal_id: UUID, context: ReadContext, session: DbSession
+) -> SessionResponse | None:
+    """`POST /sessions/open`'s 409 on an already-open terminal names the
+    conflict but not the session — this is how a client finds it, so it can
+    close a shift it did not itself open."""
+    pos_session = await PosService(session, context).current_session(terminal_id)
+    return SessionResponse.model_validate(pos_session) if pos_session else None
+
+
 @router.post("/sessions/open", response_model=SessionResponse, status_code=201)
 async def open_session(
     payload: SessionOpen, context: SessionContext, session: DbSession
