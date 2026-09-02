@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpFromLine, Boxes, PackagePlus, Plus } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, Boxes, PackagePlus, Plus, Trash2 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
 import { PosPanel } from "@/components/pos-panel";
@@ -28,7 +28,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   });
-  const body = (await response.json()) as T & ApiError;
+  const body = (response.status === 204 ? {} : await response.json()) as T & ApiError;
   if (!response.ok) throw new Error(body.error?.message ?? "The request could not be completed.");
   return body;
 }
@@ -47,7 +47,7 @@ export function CatalogInventoryPanel() {
   const load = useCallback(async () => {
     try {
       const [productPage, unitPage, warehousePage, balancePage, movementPage] = await Promise.all([
-        api<ProductPage>("products/?page_size=100"),
+        api<ProductPage>("products/?is_active=true&page_size=100"),
         api<{ items: Unit[] }>("units/"),
         api<{ items: Warehouse[] }>("warehouses/"),
         api<{ items: Balance[] }>("inventory/balances/"),
@@ -55,7 +55,7 @@ export function CatalogInventoryPanel() {
       ]);
       const remainingProductPages = await Promise.all(
         Array.from({ length: Math.max(0, (productPage.total_pages ?? 1) - 1) }, (_, index) =>
-          api<ProductPage>(`products/?page=${index + 2}&page_size=100`),
+          api<ProductPage>(`products/?is_active=true&page=${index + 2}&page_size=100`),
         ),
       );
       const allProducts = [productPage, ...remainingProductPages].flatMap((page) => page.items ?? []);
@@ -86,6 +86,15 @@ export function CatalogInventoryPanel() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Product creation failed."); } finally { setBusy(false); }
   }
 
+  async function deleteProduct(product: Product) {
+    if (!window.confirm(`Delete ${product.name}? Only unused products can be deleted.`)) return;
+    setBusy(true); setError(null);
+    try {
+      await api(`products/${product.id}`, { method: "DELETE" });
+      await load();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Product deletion failed."); } finally { setBusy(false); }
+  }
+
   async function postMovement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); const form = event.currentTarget; const data = new FormData(form);
     const operation = String(data.get("operation"));
@@ -103,7 +112,7 @@ export function CatalogInventoryPanel() {
   return <>
     {error && <p role="alert" className="workspace-error">{error}</p>}
     <section id="catalog" className="management-card"><div className="section-title"><div><small>CATALOG</small><h2>Products</h2></div><span>{productTotal} total · 8 per page</span></div>
-      <PaginatedList items={productLookup} pageSize={8} label="Product catalog" className="inventory-table" scrollable keyFor={(product) => product.id} header={<div className="inventory-head"><span>Product</span><span>SKU</span><span>Cost</span><span>Price</span></div>} renderItem={(product) => <div><strong>{product.name}</strong><span>{product.sku}</span><span>{product.cost_price}</span><span>{product.selling_price}</span></div>} empty={<p className="empty-state">No products yet.</p>} />
+      <PaginatedList items={productLookup} pageSize={8} label="Product catalog" className="inventory-table product-table" scrollable keyFor={(product) => product.id} header={<div className="inventory-head"><span>Product</span><span>SKU</span><span>Cost</span><span>Price</span><span>Action</span></div>} renderItem={(product) => <div><strong>{product.name}</strong><span>{product.sku}</span><span>{product.cost_price}</span><span>{product.selling_price}</span><button type="button" className="icon-action danger" disabled={busy} aria-label={`Delete ${product.name}`} title="Delete unused product" onClick={() => void deleteProduct(product)}><Trash2 /></button></div>} empty={<p className="empty-state">No products yet.</p>} />
       <form className="catalog-form" onSubmit={createUnit}><input name="code" aria-label="Unit code" placeholder="Unit code" pattern="[A-Z0-9_\-]+" maxLength={16} required /><input name="name" aria-label="Unit name" placeholder="Unit name" maxLength={100} required /><input name="precision" aria-label="Unit precision" type="number" min={0} max={6} defaultValue={0} required /><button disabled={busy}><Plus />Add unit</button></form>
       <form className="catalog-form product-form" onSubmit={createProduct}><input name="sku" aria-label="Product SKU" placeholder="SKU" maxLength={64} required /><input name="name" aria-label="Product name" placeholder="Product name" maxLength={300} required /><select name="uom_id" aria-label="Unit" required defaultValue=""><option value="" disabled>Select unit</option>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.code} — {unit.name}</option>)}</select><input name="selling_price" aria-label="Selling price" inputMode="decimal" placeholder="0.0000" pattern="[0-9]+(\.[0-9]{1,4})?" required /><button disabled={busy || units.length === 0}><PackagePlus />Add product</button></form>
     </section>

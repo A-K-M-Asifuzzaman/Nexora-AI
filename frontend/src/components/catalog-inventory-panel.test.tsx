@@ -98,4 +98,20 @@ describe("CatalogInventoryPanel", () => {
       ),
     );
   });
+
+  it("deletes an unused product without trying to parse the empty 204 response", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === "DELETE") return { ok: true, status: 204, json: async () => { throw new Error("204 has no body"); } };
+      return { ok: true, status: 200, json: async () => responseFor(String(input)) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<CatalogInventoryPanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Black Tea" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/bff/products/product-1",
+      expect.objectContaining({ method: "DELETE" }),
+    ));
+  });
 });

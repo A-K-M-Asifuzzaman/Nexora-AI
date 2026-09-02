@@ -36,6 +36,9 @@ services:
 
   frontend:
     mem_limit: 1536m
+    environment:
+      DEMO_ACCOUNT_EMAIL: ${DEMO_ACCOUNT_EMAIL:?DEMO_ACCOUNT_EMAIL must be set for the public demo}
+      DEMO_ACCOUNT_PASSWORD: ${DEMO_ACCOUNT_PASSWORD:?DEMO_ACCOUNT_PASSWORD must be set for the public demo}
 
   minio:
     mem_limit: 1536m

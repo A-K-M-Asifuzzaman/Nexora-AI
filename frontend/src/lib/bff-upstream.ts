@@ -147,7 +147,7 @@ export async function proxyUpstream(request: Request, path: string[]): Promise<R
     response = await call(outcome.accessToken);
   }
   const payload = await response.text();
-  if (response.headers.get("content-type")?.includes("application/json")) {
+  if (payload && response.headers.get("content-type")?.includes("application/json")) {
     const json = JSON.parse(payload) as Record<string, unknown>;
     if (typeof json.access_token === "string") {
       const latest = await readSession();

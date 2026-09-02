@@ -23,8 +23,8 @@ describe("DashboardOverview", () => {
   it("renders live reporting data with direct chart labels and a table fallback", async () => {
     render(<DashboardOverview />);
 
-    expect(await screen.findByRole("heading", { name: "Clarity at a glance" })).toBeVisible();
-    expect((await screen.findAllByText("$15,000"))[0]).toBeVisible();
+    expect(await screen.findByRole("heading", { name: /Clarity at a glance/ })).toBeVisible();
+    await waitFor(() => expect(screen.getAllByText("৳15,000")[0]).toBeVisible());
     expect(screen.getByText("Wireless Keyboard")).toBeVisible();
     expect(screen.getByText("proposal")).toBeVisible();
     expect(screen.getByText("USB-C Dock")).toBeVisible();

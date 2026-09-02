@@ -115,6 +115,8 @@ services:
       BFF_REDIS_URL: redis://:${REDIS_PASSWORD:-nexora_redis_pw}@redis:6379/3
       BFF_SESSION_SECRET: ${BFF_SESSION_SECRET:-development-bff-session-secret-change-me}
       NEXT_PUBLIC_API_BASE_URL: /api/bff
+      DEMO_ACCOUNT_EMAIL: ${DEMO_ACCOUNT_EMAIL:-demo@nexora.ai}
+      DEMO_ACCOUNT_PASSWORD: ${DEMO_ACCOUNT_PASSWORD:-NexoraDemo!2026}
     depends_on:
       backend:
         condition: service_healthy

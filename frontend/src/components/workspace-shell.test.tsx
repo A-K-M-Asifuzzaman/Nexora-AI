@@ -43,9 +43,15 @@ describe("WorkspaceShell", () => {
       return { ok: true, json: async () => body };
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<WorkspaceShell />);
+    render(<WorkspaceShell section="administration" />);
 
-    fireEvent.change(await screen.findByLabelText("Colleague email"), { target: { value: "colleague@example.com" } });
+    expect(await screen.findByRole("heading", { name: /Organization/, level: 1 })).toBeVisible();
+    expect(screen.getAllByRole("link", { name: /Catalog & inventory/ })[0]).toHaveAttribute("href", "/workspace/inventory");
+    for (const link of screen.getAllByRole("link", { name: /Organization/ })) {
+      expect(link).toHaveAttribute("aria-current", "page");
+    }
+
+    fireEvent.change(screen.getByLabelText("Colleague email"), { target: { value: "colleague@example.com" } });
     fireEvent.change(screen.getByLabelText("Role"), { target: { value: "role-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Send invite" }));
 
@@ -53,5 +59,17 @@ describe("WorkspaceShell", () => {
       "/api/bff/invitations/",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ email: "colleague@example.com", role_id: "role-1" }) }),
     ));
+  });
+
+  it("opens an accessible mobile navigation drawer", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ email: "owner@example.com", full_name: "Workspace Owner", active_tenant_id: "tenant-1", memberships: [{ tenant_id: "tenant-1", tenant_name: "Acme", roles: ["OWNER"] }] }) }));
+    render(<WorkspaceShell section="overview" />);
+
+    const trigger = await screen.findByRole("button", { name: "Open workspace navigation" });
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("complementary", { name: "Mobile workspace navigation" })).toBeVisible();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("complementary", { name: "Mobile workspace navigation" })).not.toBeInTheDocument();
   });
 });

@@ -219,4 +219,20 @@ describe("refresh re-binds the active organization", () => {
     await proxyUpstream(get(), ["auth/me"]);
     expect(calls.some((url) => url.includes("/auth/switch-tenant"))).toBe(false);
   }, 10_000);
+
+  it("forwards an empty JSON-labelled 204 response without parsing it", async () => {
+    await seed("active", "refresh-1");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, {
+      status: 204,
+      headers: { "Content-Type": "application/json" },
+    })));
+
+    const response = await proxyUpstream(
+      new Request("http://bff.test/api/bff/invitations/invitation-id", { method: "DELETE" }),
+      ["invitations", "invitation-id"],
+    );
+
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe("");
+  });
 });

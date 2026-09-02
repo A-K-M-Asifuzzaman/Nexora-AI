@@ -1,7 +1,8 @@
 "use client";
 
+import gsap from "gsap";
 import { AlertTriangle, ArrowUpRight, Boxes, CircleDollarSign, RefreshCw, Scale, WalletCards } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 type Dashboard = {
   from_date: string;
@@ -23,14 +24,17 @@ type LowStock = { product_id: string; sku: string; name: string; warehouse: stri
 type ApiError = { error?: { message?: string } };
 type Range = "30" | "90" | "YTD";
 
+// `Intl`'s own currency symbol for BDT only resolves to "৳" under a bn-*
+// locale, which also switches digits to Bengali numerals and lakh/crore
+// grouping — a bigger visual change than intended here. Formatting as plain
+// decimals and prefixing the taka mark ourselves keeps Western digits and
+// thousands grouping consistent with the rest of the interface.
 const regularMoney = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
+  style: "decimal",
   maximumFractionDigits: 0,
 });
 const compactMoney = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
+  style: "decimal",
   notation: "compact",
   maximumFractionDigits: 1,
 });
@@ -46,7 +50,9 @@ function api<T>(path: string): Promise<T> {
 export function formatMoney(value: string): string {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return "—";
-  return (Math.abs(amount) >= 100_000 ? compactMoney : regularMoney).format(amount);
+  const magnitude = Math.abs(amount);
+  const formatted = (magnitude >= 100_000 ? compactMoney : regularMoney).format(magnitude);
+  return `${amount < 0 ? "-" : ""}৳${formatted}`;
 }
 
 export function weeklyTrend(items: TrendPoint[]): TrendPoint[] {
@@ -102,6 +108,7 @@ function TrendChart({ items }: { items: TrendPoint[] }) {
         <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-labelledby="sales-trend-title sales-trend-desc">
           <title id="sales-trend-title">Weekly point-of-sale revenue</title>
           <desc id="sales-trend-desc">Revenue aggregated by week for the selected reporting range.</desc>
+          <defs><linearGradient id="trend-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#36c997" stopOpacity="0.52" /><stop offset="58%" stopColor="#596fd8" stopOpacity="0.18" /><stop offset="100%" stopColor="#7359e8" stopOpacity="0.02" /></linearGradient></defs>
           <line x1="0" y1={height - 1} x2={width} y2={height - 1} className="chart-axis" />
           <polygon points={area} className="trend-area" />
           <polyline points={line} className="trend-line" />
@@ -119,6 +126,7 @@ function TrendChart({ items }: { items: TrendPoint[] }) {
 }
 
 export function DashboardOverview() {
+  const overviewRef = useRef<HTMLElement>(null);
   const [range, setRange] = useState<Range>("90");
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
@@ -154,14 +162,29 @@ export function DashboardOverview() {
 
   useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
 
+  useLayoutEffect(() => {
+    if (!dashboard || !overviewRef.current || (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches)) return;
+    const context = gsap.context(() => {
+      gsap.fromTo(".decision-brief article,.kpi-band article", { y: 13 }, { y: 0, duration: 0.42, stagger: 0.045, ease: "power2.out" });
+      gsap.fromTo(".visual-panel", { y: 16 }, { y: 0, duration: 0.5, stagger: 0.07, ease: "power2.out", delay: 0.12 });
+      gsap.fromTo(".trend-line", { strokeDasharray: 1200, strokeDashoffset: 1200 }, { strokeDashoffset: 0, duration: 1.05, ease: "power2.inOut", delay: 0.18 });
+      gsap.fromTo(".ranking-panel li i,.pipeline-stack i span", { scaleX: 0, transformOrigin: "left center" }, { scaleX: 1, duration: 0.65, stagger: 0.055, ease: "power2.out", delay: 0.3 });
+    }, overviewRef);
+    return () => context.revert();
+  }, [dashboard, range]);
+
   const maxProduct = Math.max(1, ...products.map((product) => Number(product.revenue)));
   const pipelineTotal = pipeline.reduce((sum, stage) => sum + Number(stage.amount), 0);
+  const revenue = Number(dashboard?.pos_revenue ?? "0");
+  const grossProfit = Number(dashboard?.gross_profit ?? "0");
+  const cashExposure = Number(dashboard?.accounts_receivable ?? "0") - Number(dashboard?.accounts_payable ?? "0");
+  const grossMargin = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
 
   if (!dashboard && !busy && error) return null;
   return (
-    <section id="overview" className="overview-surface" aria-labelledby="overview-title">
+    <section id="overview" className="overview-surface" aria-labelledby="overview-title" ref={overviewRef}>
       <header className="overview-header">
-        <div><small>LIVE BUSINESS PULSE</small><h2 id="overview-title">Clarity at a glance</h2><p>Sales, cash exposure, stock and pipeline—connected to the same records below.</p></div>
+        <div><small>LIVE BUSINESS PULSE</small><h2 id="overview-title">Clarity at a glance <span lang="bn">· এক নজরে ব্যবসা</span></h2><p>Sales, cash exposure, stock and pipeline—connected to the same records below.<span lang="bn">বিক্রয়, নগদ, মজুত ও সম্ভাব্য ব্যবসার সহজ সারাংশ।</span></p></div>
         <div className="overview-tools" role="group" aria-label="Report range">
           {(["30", "90", "YTD"] as Range[]).map((value) => <button key={value} className={range === value ? "active" : ""} onClick={() => setRange(value)}>{value === "YTD" ? "Year to date" : `${value} days`}</button>)}
           <button aria-label="Refresh overview" onClick={() => void load()} disabled={busy}><RefreshCw className={busy ? "spin" : ""} /></button>
@@ -170,12 +193,18 @@ export function DashboardOverview() {
       {error && <p className="overview-warning" role="status">{error}</p>}
       <div className="pulse-status"><span><i />Operational data</span><span>{updatedAt ? `Updated ${updatedAt}` : "Loading…"}</span></div>
 
+      <div className="decision-brief" role="region" aria-label="Business decision summary">
+        <article><small>Sales efficiency <span lang="bn">বিক্রয় দক্ষতা</span></small><strong>{grossMargin.toFixed(1)}% gross margin</strong><p lang="bn">প্রতি ১০০ টাকার বিক্রয়ে প্রায় {grossMargin.toFixed(0)} টাকা স্থূল লাভ।</p></article>
+        <article><small>Cash position <span lang="bn">নগদ অবস্থান</span></small><strong>{formatMoney(String(Math.abs(cashExposure)))}</strong><p lang="bn">{cashExposure >= 0 ? "সরবরাহকারীর পাওনার চেয়ে ক্রেতার কাছে বেশি অর্থ বাকি।" : "ক্রেতার পাওনার চেয়ে সরবরাহকারীকে বেশি অর্থ দিতে হবে।"}</p></article>
+        <article className={lowStock.length ? "attention" : "healthy"}><small>Action needed <span lang="bn">করণীয়</span></small><strong>{lowStock.length ? `${lowStock.length} stock items` : "Stock is healthy"}</strong><p lang="bn">{lowStock.length ? "পুনরায় অর্ডারের সীমায় পৌঁছানো পণ্য আগে যাচাই করুন।" : "বর্তমানে কোনো পণ্য পুনরায় অর্ডারের সীমায় নেই।"}</p></article>
+      </div>
+
       <div className="kpi-band" role="group" aria-label="Key business indicators">
-        <article className="primary"><span><CircleDollarSign /></span><small>POS revenue</small><strong>{formatMoney(dashboard?.pos_revenue ?? "0")}</strong><p>{dashboard?.transactions ?? 0} completed transactions</p></article>
-        <article><span><ArrowUpRight /></span><small>Gross profit</small><strong>{formatMoney(dashboard?.gross_profit ?? "0")}</strong><p>After point-of-sale product cost</p></article>
-        <article><span><WalletCards /></span><small>Receivables</small><strong>{formatMoney(dashboard?.accounts_receivable ?? "0")}</strong><p>Customer cash still to collect</p></article>
-        <article><span><Scale /></span><small>Payables</small><strong>{formatMoney(dashboard?.accounts_payable ?? "0")}</strong><p>Supplier obligations outstanding</p></article>
-        <article><span><Boxes /></span><small>Inventory value</small><strong>{formatMoney(dashboard?.inventory_value ?? "0")}</strong><p>{lowStock.length} products at reorder level</p></article>
+        <article className="primary"><span><CircleDollarSign /></span><small>POS revenue · <b lang="bn">বিক্রয়</b></small><strong>{formatMoney(dashboard?.pos_revenue ?? "0")}</strong><p>{dashboard?.transactions ?? 0} completed transactions</p></article>
+        <article><span><ArrowUpRight /></span><small>Gross profit · <b lang="bn">স্থূল লাভ</b></small><strong>{formatMoney(dashboard?.gross_profit ?? "0")}</strong><p>After point-of-sale product cost</p></article>
+        <article><span><WalletCards /></span><small>Receivables · <b lang="bn">পাওনা</b></small><strong>{formatMoney(dashboard?.accounts_receivable ?? "0")}</strong><p>Customer cash still to collect</p></article>
+        <article><span><Scale /></span><small>Payables · <b lang="bn">দেনা</b></small><strong>{formatMoney(dashboard?.accounts_payable ?? "0")}</strong><p>Supplier obligations outstanding</p></article>
+        <article><span><Boxes /></span><small>Inventory value · <b lang="bn">মজুত মূল্য</b></small><strong>{formatMoney(dashboard?.inventory_value ?? "0")}</strong><p>{lowStock.length} products at reorder level</p></article>
       </div>
 
       <div className="overview-grid">
