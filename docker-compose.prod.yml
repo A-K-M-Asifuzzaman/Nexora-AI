@@ -139,7 +139,10 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
-    command: ["celery", "-A", "app.workers.celery_app:celery", "beat", "--loglevel=INFO"]
+    # --schedule: see docker-compose.yml's identical comment — /app is
+    # root-owned in the runtime image, so beat's default schedule file
+    # location (its CWD) is not writable by the unprivileged nexora user.
+    command: ["celery", "-A", "app.workers.celery_app:celery", "beat", "--loglevel=INFO", "--schedule=/home/nexora/celerybeat-schedule"]
     restart: unless-stopped
 
   frontend:

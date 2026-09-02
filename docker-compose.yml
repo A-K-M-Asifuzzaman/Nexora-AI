@@ -106,7 +106,12 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
-    command: ["celery", "-A", "app.workers.celery_app:celery", "beat", "--loglevel=INFO"]
+    # --schedule: the Dockerfile's runtime stage COPYs /app as root before
+    # switching to the unprivileged `nexora` user, so /app itself is not
+    # writable by that user — celery beat's default schedule file (created
+    # in the process's CWD) would fail with a permission error. The user's
+    # own home directory (from `useradd --create-home`) is writable.
+    command: ["celery", "-A", "app.workers.celery_app:celery", "beat", "--loglevel=INFO", "--schedule=/home/nexora/celerybeat-schedule"]
 
   frontend:
     build: {context: ./frontend}
