@@ -119,25 +119,20 @@ jobs:
   frontend-tests:
     runs-on: ubuntu-latest
     # The BFF single-flight refresh lock lives in Redis, and its tests use the
-    # real thing — a mocked lock would only prove the mock is exclusive. The
-    # BFF itself only speaks Upstash's REST protocol (see bff-session.ts), so
-    # `srh` bridges that protocol to this same Redis container.
+    # real thing — a mocked lock would only prove the mock is exclusive.
+    # bff-session.ts prefers Upstash's REST client when configured but falls
+    # back to plain TCP redis:// otherwise (see its top-level comment) — no
+    # Upstash credentials here, so this exercises that fallback, matching
+    # what's actually live in production today.
     services:
       redis:
         image: redis:7-alpine
+        ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping" --health-interval 5s
           --health-timeout 5s --health-retries 12
-      srh:
-        image: hiett/serverless-redis-http:latest
-        ports: ["8079:80"]
-        env:
-          SRH_MODE: env
-          SRH_TOKEN: ci-srh-token
-          SRH_CONNECTION_STRING: redis://redis:6379/3
     env:
-      KV_REST_API_URL: http://localhost:8079
-      KV_REST_API_TOKEN: ci-srh-token
+      BFF_REDIS_URL: redis://127.0.0.1:6379/3
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -194,7 +189,6 @@ jobs:
       POSTGRES_APP_USER: nexora_app
       POSTGRES_APP_PASSWORD: app_pw
       REDIS_PASSWORD: redis_pw
-      BFF_REDIS_REST_TOKEN: demo-config-check-only
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       SMTP_USER: demo

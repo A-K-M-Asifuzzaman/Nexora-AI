@@ -81,20 +81,6 @@ services:
       retries: 12
     restart: unless-stopped
 
-  # The frontend's BFF talks to Redis only over Upstash's REST protocol (no
-  # persistent TCP client — see bff-session.ts). SRH bridges that same
-  # protocol to this deployment's own Redis container.
-  srh:
-    image: hiett/serverless-redis-http:latest
-    environment:
-      SRH_MODE: env
-      SRH_TOKEN: ${BFF_REDIS_REST_TOKEN:?BFF_REDIS_REST_TOKEN must be set}
-      SRH_CONNECTION_STRING: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/3
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
   migrate:
     build: {context: ./backend}
     environment: *backend-environment
@@ -163,15 +149,16 @@ services:
     build: {context: ./frontend}
     environment:
       BACKEND_INTERNAL_URL: http://backend:8000
-      KV_REST_API_URL: http://srh:80
-      KV_REST_API_TOKEN: ${BFF_REDIS_REST_TOKEN:?BFF_REDIS_REST_TOKEN must be set}
+      # Upstash REST credentials (KV_REST_API_URL/TOKEN) take priority over
+      # this when both are set — see bff-session.ts. This self-hosted
+      # deployment uses the TCP fallback client against its own Redis
+      # container instead.
+      BFF_REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/3
       BFF_SESSION_SECRET: ${BFF_SESSION_SECRET:?BFF_SESSION_SECRET must be set}
       NEXT_PUBLIC_API_BASE_URL: /api/bff
     depends_on:
       backend:
         condition: service_healthy
-      srh:
-        condition: service_started
     restart: unless-stopped
 
   minio:

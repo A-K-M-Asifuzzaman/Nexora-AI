@@ -83,9 +83,20 @@ type Store = {
 class UpstashStore implements Store {
   private readonly client: UpstashRedis;
   constructor(url: string, token: string) {
-    // The session value is our own encrypted, non-JSON payload — never let
-    // the SDK try to JSON-parse it back out.
-    this.client = new UpstashRedis({ url, token, automaticDeserialization: false });
+    this.client = new UpstashRedis({
+      url,
+      token,
+      // The session value is our own encrypted, non-JSON payload — never
+      // let the SDK try to JSON-parse it back out.
+      automaticDeserialization: false,
+      // The SDK batches concurrent calls into one pipelined HTTP request by
+      // default. Real Upstash handles that fine, but it's an internal perf
+      // optimization this store doesn't need — a handful of calls per
+      // request — and it broke against the local/CI SRH bridge (malformed
+      // pipeline responses: "Unexpected end of JSON input", "res.map is not
+      // a function"). Off is simpler and works identically everywhere.
+      enableAutoPipelining: false,
+    });
   }
   get(key: string) { return this.client.get<string>(key); }
   set(key: string, value: string, opts?: SetOpts) {

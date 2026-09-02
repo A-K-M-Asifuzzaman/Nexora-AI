@@ -13,9 +13,6 @@ services:
   redis:
     mem_limit: 768m
 
-  srh:
-    mem_limit: 128m
-
   migrate:
     mem_limit: 768m
 
