@@ -4,6 +4,7 @@ import { ArrowDownToLine, ArrowUpFromLine, Boxes, PackagePlus, Plus, Trash2 } fr
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
 import { PosPanel } from "@/components/pos-panel";
+import { PurchasingPanel } from "@/components/purchasing-panel";
 import { PaginatedList } from "@/components/paginated-list";
 
 type Product = { id: string; sku: string; name: string; cost_price: string; selling_price: string; is_active: boolean };
@@ -121,6 +122,7 @@ export function CatalogInventoryPanel() {
       <form className="catalog-form movement-form" onSubmit={postMovement}><select name="operation" aria-label="Movement type" defaultValue="receipts"><option value="receipts">Receive stock</option><option value="issues">Issue stock</option></select><select name="warehouse_id" aria-label="Warehouse" required defaultValue=""><option value="" disabled>Select warehouse</option>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}</select><select name="product_id" aria-label="Product" required defaultValue=""><option value="" disabled>Select product</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select><input name="quantity" aria-label="Quantity" inputMode="decimal" placeholder="Quantity" required /><input name="unit_cost" aria-label="Unit cost for receipts" inputMode="decimal" placeholder="Unit cost (receipts)" /><button disabled={busy || products.length === 0 || warehouses.length === 0}><Boxes />Post movement</button></form>
       <PaginatedList items={movements} pageSize={6} label="Recent inventory movements" className="movement-list" keyFor={(movement) => movement.id} header={<h3>Recent movements</h3>} renderItem={(movement) => <article>{movement.movement_type === "RECEIPT" ? <ArrowDownToLine /> : <ArrowUpFromLine />}<div><strong>{productName(movement.product_id)}</strong><small>{warehouseName(movement.warehouse_id)} · {new Date(movement.occurred_at).toLocaleString()}</small></div><span>{movement.quantity}</span></article>} />
     </section>
+    <PurchasingPanel />
     <PosPanel />
   </>;
 }

@@ -14,7 +14,7 @@ type SalesOrder = {
   order_date: string; total_amount: string;
 };
 type Invoice = {
-  id: string; invoice_number: string | null; customer_id: string; status: string;
+  id: string; invoice_number: string | null; customer_id: string; branch_id: string; status: string;
   issue_date: string; total_amount: string; paid_amount: string;
   sales_order_id: string | null;
 };
@@ -22,6 +22,8 @@ type Receivable = {
   customer_id: string; customer_name: string; invoiced: string; paid: string; outstanding: string;
 };
 type ApiError = { error?: { message?: string } };
+
+const PAYMENT_METHODS = ["CASH", "CARD", "BANK_TRANSFER", "MOBILE"] as const;
 
 function csrfToken(): string {
   const value = document.cookie.split("; ").find((part) => part.startsWith("nexora_csrf="));
@@ -184,6 +186,31 @@ export function TradingPanel() {
       headers: { "Idempotency-Key": idempotencyKey() },
     }));
 
+  const outstanding = (invoice: Invoice) =>
+    (Number(invoice.total_amount) - Number(invoice.paid_amount)).toFixed(4);
+
+  async function recordPayment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget; const data = new FormData(form);
+    const invoice = invoices.find((item) => item.id === data.get("invoice_id"));
+    if (!invoice) return;
+    await run(async () => {
+      await api("sales/payments", {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey() },
+        body: JSON.stringify({
+          customer_id: invoice.customer_id,
+          branch_id: invoice.branch_id,
+          method: data.get("method"),
+          amount: data.get("amount"),
+          payment_date: new Date().toISOString().slice(0, 10),
+          allocations: [{ invoice_id: invoice.id, amount: data.get("amount") }],
+        }),
+      });
+      form.reset();
+    });
+  }
+
   const customerName = (id: string) => customers.find((c) => c.id === id)?.name ?? "—";
 
   if (!visible) return null;
@@ -268,6 +295,18 @@ export function TradingPanel() {
           <em className={invoice.status === "PAID" ? "active" : "inactive"}>{invoice.status.replace(/_/g, " ").toLowerCase()}</em>
           {invoice.status === "DRAFT" && <button className="row-action" disabled={busy} onClick={() => void issue(invoice)}>Issue</button>}
         </article>} />
+      <form className="inline-form" onSubmit={recordPayment}>
+        <select name="invoice_id" aria-label="Invoice" required defaultValue="">
+          <option value="" disabled>Invoice to pay</option>
+          {invoices.filter((invoice) => invoice.status === "ISSUED" || invoice.status === "PARTIALLY_PAID").map((invoice) =>
+            <option key={invoice.id} value={invoice.id}>{invoice.invoice_number} · {customerName(invoice.customer_id)} · {money(outstanding(invoice))} due</option>)}
+        </select>
+        <select name="method" aria-label="Payment method" required defaultValue="CASH">
+          {PAYMENT_METHODS.map((method) => <option key={method} value={method}>{method.replace("_", " ")}</option>)}
+        </select>
+        <input name="amount" aria-label="Payment amount" inputMode="decimal" placeholder="Amount" pattern="[0-9]+(\.[0-9]{1,4})?" required />
+        <button disabled={busy}><HandCoins />Record payment</button>
+      </form>
     </section>
   </>;
 }
