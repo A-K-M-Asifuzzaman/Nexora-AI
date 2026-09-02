@@ -3,6 +3,8 @@
 import { FileText, HandCoins, Receipt, Truck, Users2 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
+import { PaginatedList } from "@/components/paginated-list";
+
 type Party = { id: string; code: string; name: string; is_active: boolean };
 type Product = { id: string; sku: string; name: string; selling_price: string };
 type Warehouse = { id: string; code: string; name: string };
@@ -196,14 +198,11 @@ export function TradingPanel() {
         <article><small>You owe</small><strong>{money(payableTotal)}</strong></article>
       </div>
       {error && <p role="alert" className="workspace-error">{error}</p>}
-      <div className="branch-list">
-        {receivables.length === 0 && <p className="empty-state">Nothing outstanding.</p>}
-        {receivables.map((row) => <article key={row.customer_id}>
+      <PaginatedList items={receivables} pageSize={5} label="Receivables" className="branch-list" keyFor={(row) => row.customer_id} empty={<p className="empty-state">Nothing outstanding.</p>} renderItem={(row) => <article>
           <span className="branch-icon"><HandCoins /></span>
           <div><strong>{row.customer_name}</strong><small>Invoiced {money(row.invoiced)} · Paid {money(row.paid)}</small></div>
           <em className="active">{money(row.outstanding)}</em>
-        </article>)}
-      </div>
+        </article>} />
     </section>
 
     <section id="parties" className="management-card">
@@ -211,16 +210,10 @@ export function TradingPanel() {
         <div><small>RELATIONSHIPS</small><h2>Customers &amp; suppliers</h2></div>
         <span>{customers.length} / {suppliers.length}</span>
       </div>
-      <div className="branch-list">
-        {customers.map((party) => <article key={party.id}>
-          <span className="branch-icon"><Users2 /></span>
-          <div><strong>{party.name}</strong><small>{party.code} · Customer</small></div>
-        </article>)}
-        {suppliers.map((party) => <article key={party.id}>
-          <span className="branch-icon"><Truck /></span>
-          <div><strong>{party.name}</strong><small>{party.code} · Supplier</small></div>
-        </article>)}
-      </div>
+      <PaginatedList items={[...customers.map((party) => ({ party, kind: "Customer" as const })), ...suppliers.map((party) => ({ party, kind: "Supplier" as const }))]} pageSize={6} label="Customers and suppliers" className="branch-list" keyFor={(item) => `${item.kind}-${item.party.id}`} renderItem={(item) => <article>
+        <span className="branch-icon">{item.kind === "Customer" ? <Users2 /> : <Truck />}</span>
+        <div><strong>{item.party.name}</strong><small>{item.party.code} · {item.kind}</small></div>
+      </article>} />
       <form className="inline-form" onSubmit={createCustomer}>
         <input name="code" aria-label="Customer code" placeholder="CODE" maxLength={32} required />
         <input name="name" aria-label="Customer name" placeholder="Customer name" maxLength={300} required />
@@ -238,16 +231,13 @@ export function TradingPanel() {
         <div><small>SELLING</small><h2>Sales orders</h2></div>
         <span>{orders.length} total</span>
       </div>
-      <div className="branch-list">
-        {orders.length === 0 && <p className="empty-state">No sales orders yet.</p>}
-        {orders.map((order) => <article key={order.id}>
+      <PaginatedList items={orders} pageSize={6} label="Sales orders" className="branch-list" keyFor={(order) => order.id} empty={<p className="empty-state">No sales orders yet.</p>} renderItem={(order) => <article>
           <span className="branch-icon"><FileText /></span>
           <div><strong>{order.order_number}</strong><small>{customerName(order.customer_id)} · {order.order_date}</small></div>
           <em className={order.status === "CANCELLED" ? "inactive" : "active"}>{order.status.replace(/_/g, " ").toLowerCase()}</em>
           <b className="amount">{money(order.total_amount)}</b>
           {nextAction(order) && <button className="row-action" disabled={busy} onClick={() => void advance(order)}>{nextAction(order)}</button>}
-        </article>)}
-      </div>
+        </article>} />
       <form className="inline-form order-form" onSubmit={createOrder}>
         <select name="customer_id" aria-label="Customer" required defaultValue="">
           <option value="" disabled>Customer</option>
@@ -268,9 +258,7 @@ export function TradingPanel() {
         <div><small>BILLING</small><h2>Invoices</h2></div>
         <span>{invoices.length} total</span>
       </div>
-      <div className="branch-list">
-        {invoices.length === 0 && <p className="empty-state">No invoices yet.</p>}
-        {invoices.map((invoice) => <article key={invoice.id}>
+      <PaginatedList items={invoices} pageSize={6} label="Invoices" className="branch-list" keyFor={(invoice) => invoice.id} empty={<p className="empty-state">No invoices yet.</p>} renderItem={(invoice) => <article>
           <span className="branch-icon"><Receipt /></span>
           <div>
             {/* A draft holds no number until issued, so the series stays gapless. */}
@@ -279,8 +267,7 @@ export function TradingPanel() {
           </div>
           <em className={invoice.status === "PAID" ? "active" : "inactive"}>{invoice.status.replace(/_/g, " ").toLowerCase()}</em>
           {invoice.status === "DRAFT" && <button className="row-action" disabled={busy} onClick={() => void issue(invoice)}>Issue</button>}
-        </article>)}
-      </div>
+        </article>} />
     </section>
   </>;
 }

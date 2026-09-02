@@ -1,11 +1,13 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-import { createContentSecurityPolicy } from "@/lib/content-security-policy";
+import { createContentSecurityPolicy, requestUsesHttps } from "@/lib/content-security-policy";
 
 export function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
-  const policy = createContentSecurityPolicy(nonce, process.env.NODE_ENV === "development");
+  const isDevelopment = process.env.NODE_ENV === "development";
+  const isSecureRequest = requestUsesHttps(request.nextUrl.protocol, request.headers.get("x-forwarded-proto"));
+  const policy = createContentSecurityPolicy(nonce, isDevelopment, isSecureRequest);
   const requestHeaders = new Headers(request.headers);
 
   // Next uses the request CSP to apply this nonce to its framework and inline

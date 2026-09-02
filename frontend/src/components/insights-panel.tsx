@@ -287,7 +287,7 @@ export function InsightsPanel() {
                   <span><i className="forecast" />Forecast ({forecast.periods_ahead} weeks)</span>
                 </p>
 
-                <div className="score-table">
+                <div className="score-table" role="region" aria-label="Forecast values" tabIndex={0}>
                   <div className="score-head">
                     <span>Week</span>
                     <span>Forecast</span>
@@ -304,7 +304,7 @@ export function InsightsPanel() {
                   ))}
                 </div>
 
-                <div className="score-table backtest-table">
+                <div className="score-table backtest-table" role="region" aria-label="Forecast model scores" tabIndex={0}>
                   <div className="score-head">
                     <span>Model</span>
                     <span>MAE</span>

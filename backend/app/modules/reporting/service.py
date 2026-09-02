@@ -208,7 +208,9 @@ class ReportingService:
                     SELECT d::date AS day,
                            COALESCE(SUM(s.total_amount), 0) AS revenue,
                            COUNT(s.id) AS transactions
-                      FROM generate_series(:start::date, :end::date, interval '1 day') d
+                      FROM generate_series(
+                           CAST(:start AS date), CAST(:end AS date), interval '1 day'
+                      ) d
                       LEFT JOIN sales s
                         ON s.occurred_at::date = d::date AND s.status = 'COMPLETED'
                      GROUP BY d

@@ -28,7 +28,16 @@
  * blocked styles are injected after hydration, so checking the rendered
  * document showed nothing wrong.
  */
-export function createContentSecurityPolicy(nonce: string, isDevelopment: boolean): string {
+export function requestUsesHttps(protocol: string, forwardedProtocol: string | null): boolean {
+  const externalProtocol = forwardedProtocol?.split(",", 1)[0]?.trim().toLowerCase();
+  return externalProtocol ? externalProtocol === "https" : protocol.toLowerCase() === "https:";
+}
+
+export function createContentSecurityPolicy(
+  nonce: string,
+  isDevelopment: boolean,
+  isSecureRequest: boolean,
+): string {
   const directives = [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDevelopment ? " 'unsafe-eval'" : ""}`,
@@ -41,12 +50,12 @@ export function createContentSecurityPolicy(nonce: string, isDevelopment: boolea
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",
-    // Production only. This directive rewrites every http:// request to
-    // https://, and the development server speaks plain HTTP — with it on,
-    // every fetch from the browser failed with ERR_SSL_PROTOCOL_ERROR and the
-    // whole workspace went blank. TLS terminates at the reverse proxy in
-    // production (ARCHITECTURE.md §20), which is where the upgrade belongs.
-    ...(isDevelopment ? [] : ["upgrade-insecure-requests"]),
+    // Secure production requests only. A standalone production-mode Docker
+    // image can still be served over plain HTTP for local evaluation. Applying
+    // this directive there rewrites same-origin BFF calls to https:// and makes
+    // them fail with ERR_SSL_PROTOCOL_ERROR. Behind the production reverse
+    // proxy the external request is HTTPS, so the directive remains enabled.
+    ...(!isDevelopment && isSecureRequest ? ["upgrade-insecure-requests"] : []),
   ];
 
   return `${directives.join("; ")};`;

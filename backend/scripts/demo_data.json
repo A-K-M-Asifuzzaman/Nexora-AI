@@ -36,7 +36,22 @@
     "suppliers": 120,
     "leads": 300,
     "opportunities": 200,
+    "crm_activities": 300,
+    "crm_notes": 240,
+    "documents": 24,
+    "quotations": 160,
     "sales_orders": 500,
-    "purchase_orders": 250
+    "sales_fulfillments": 220,
+    "sales_invoices": 200,
+    "customer_payments": 150,
+    "credit_notes": 24,
+    "purchase_orders": 250,
+    "goods_receipts": 150,
+    "supplier_bills": 140,
+    "supplier_payments": 105,
+    "pos_terminals": 3,
+    "pos_sales": 672,
+    "pos_refunds": 68,
+    "pos_holds": 18
   }
 }

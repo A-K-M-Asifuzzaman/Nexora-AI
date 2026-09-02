@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -55,9 +56,16 @@ ZERO = Decimal("0")
 
 
 class PosService:
-    def __init__(self, session: AsyncSession, context: TenantContext) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        context: TenantContext,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self.session = session
         self.context = context
+        self._clock = clock or (lambda: datetime.now(UTC))
         self.repository = PosRepository(session)
         self.inventory = InventoryService(session, context)
         self.audit = AuditService(session)
@@ -146,14 +154,14 @@ class PosService:
                     terminal_id=terminal.id,
                     opened_by_membership_id=self.context.membership_id,
                     status=SessionStatus.OPEN,
-                    opened_at=datetime.now(UTC),
+                    opened_at=self._clock(),
                     opening_float=payload.opening_float,
                     notes=payload.notes,
                 )
                 self.repository.add(pos_session)
                 pos_session.session_number = await NumberAllocator(
                     self.session, self.context.tenant_id
-                ).allocate("pos_session", str(datetime.now(UTC).year))
+                ).allocate("pos_session", str(self._clock().year))
                 self.audit.record(
                     self.context, events.SESSION_OPENED, "pos_session", pos_session.id
                 )
@@ -174,7 +182,7 @@ class PosService:
             pos_session.counted_cash = payload.counted_cash
             pos_session.cash_variance = round_money(payload.counted_cash - expected)
             pos_session.status = SessionStatus.CLOSED
-            pos_session.closed_at = datetime.now(UTC)
+            pos_session.closed_at = self._clock()
             pos_session.closed_by_membership_id = self.context.membership_id
             if payload.notes is not None:
                 pos_session.notes = payload.notes
@@ -234,7 +242,7 @@ class PosService:
                 customer_id=payload.customer_id,
                 cashier_membership_id=self.context.membership_id,
                 status=SaleStatus.COMPLETED,
-                occurred_at=datetime.now(UTC),
+                occurred_at=self._clock(),
                 net_amount=ZERO,
                 discount_amount=ZERO,
                 tax_amount=ZERO,
@@ -346,7 +354,7 @@ class PosService:
                 receipt_number=sale.sale_number,
                 sale_id=sale.id,
                 content=snapshot,
-                rendered_at=datetime.now(UTC),
+                rendered_at=self._clock(),
             )
             self.repository.add(receipt)
             await self._post_sale(sale)
@@ -470,7 +478,7 @@ class PosService:
                 held_by_membership_id=self.context.membership_id,
                 label=payload.label,
                 cart={"lines": [line.model_dump(mode="json") for line in payload.lines]},
-                held_at=datetime.now(UTC),
+                held_at=self._clock(),
             )
             self.repository.add(held)
             self.audit.record(self.context, events.SALE_HELD, "held_sale", held.id)
@@ -534,7 +542,7 @@ class PosService:
                 processed_by_membership_id=self.context.membership_id,
                 amount=ZERO,
                 reason=payload.reason,
-                occurred_at=datetime.now(UTC),
+                occurred_at=self._clock(),
             )
             self.repository.add(sale_return)
             await self.session.flush()

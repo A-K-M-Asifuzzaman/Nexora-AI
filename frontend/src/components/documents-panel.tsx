@@ -3,6 +3,8 @@
 import { AlertTriangle, CheckCircle2, Clock, FileText, Lock, RefreshCw, ShieldCheck, Trash2, Upload } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { PaginatedList } from "@/components/paginated-list";
+
 type DocumentStatus = "PENDING" | "EXTRACTING" | "INDEXED" | "FAILED";
 type DocumentVisibility = "TENANT" | "ROLE_RESTRICTED";
 type DocumentItem = {
@@ -238,14 +240,19 @@ export function DocumentsPanel() {
 
       {error && <p role="alert" className="workspace-error">{error}</p>}
 
-      <div className="branch-list document-list">
-        {documents.length === 0 && (
+      <PaginatedList
+        items={documents}
+        pageSize={6}
+        label="Knowledge-base documents"
+        className="branch-list document-list"
+        keyFor={(doc) => doc.id}
+        empty={(
           <p className="empty-state">
             No documents yet. Upload a policy, contract or manual to make it searchable.
           </p>
         )}
-        {documents.map((doc) => (
-          <article key={doc.id}>
+        renderItem={(doc) => (
+          <article>
             <span className="branch-icon">
               <FileText />
             </span>
@@ -277,8 +284,8 @@ export function DocumentsPanel() {
               <Trash2 />
             </button>
           </article>
-        ))}
-      </div>
+        )}
+      />
     </section>
   );
 }

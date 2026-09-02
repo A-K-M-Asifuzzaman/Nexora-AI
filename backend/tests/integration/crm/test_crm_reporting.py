@@ -240,6 +240,21 @@ async def test_dashboard_returns_money_as_strings(client: httpx.AsyncClient) -> 
     assert Decimal(body["pos_revenue"]) == Decimal("0")
 
 
+async def test_sales_trend_gap_fills_dates_and_serializes_money(
+    client: httpx.AsyncClient,
+) -> None:
+    headers, _ = await workspace(client)
+    response = await client.get(
+        f"{REPORTS}/sales-trend?from_date=2026-08-01&to_date=2026-08-03",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    assert [item["date"] for item in items] == ["2026-08-01", "2026-08-02", "2026-08-03"]
+    assert all(isinstance(item["revenue"], str) for item in items)
+    assert all(Decimal(item["revenue"]) == Decimal("0") for item in items)
+
+
 async def test_report_cache_does_not_leak_across_tenants(client: httpx.AsyncClient) -> None:
     """The invariant most likely to be got wrong silently.
 

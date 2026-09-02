@@ -20,7 +20,7 @@
 import { describe, expect, it } from "vitest";
 
 import nextConfig, { securityHeaders } from "../../next.config";
-import { createContentSecurityPolicy } from "./content-security-policy";
+import { createContentSecurityPolicy, requestUsesHttps } from "./content-security-policy";
 
 describe("SECURITY.md §11 headers", () => {
   it("declares every required header", () => {
@@ -42,7 +42,7 @@ describe("SECURITY.md §11 headers", () => {
   });
 
   it("builds a nonce-based production CSP without unsafe script execution", () => {
-    const policy = createContentSecurityPolicy("test-nonce", false);
+    const policy = createContentSecurityPolicy("test-nonce", false, true);
 
     expect(policy).toContain("script-src 'self' 'nonce-test-nonce' 'strict-dynamic'");
     expect(policy).toContain("object-src 'none'");
@@ -60,27 +60,33 @@ describe("SECURITY.md §11 headers", () => {
     // React's stylesheet insertion and the dev overlay all inject styles we
     // cannot nonce; with a nonce here the app renders unstyled. Regression for
     // the console errors reported after the CSP first shipped.
-    const policy = createContentSecurityPolicy("test-nonce", false);
+    const policy = createContentSecurityPolicy("test-nonce", false, true);
     const styleSrc = policy.split("; ").find((d) => d.startsWith("style-src"))!;
 
     expect(styleSrc).toBe("style-src 'self' 'unsafe-inline'");
     expect(styleSrc).not.toContain("nonce-");
   });
 
-  it("upgrades insecure requests in production only", () => {
-    // Regression: with this on in development the browser rewrote every
-    // http://localhost fetch to https:// and failed with
-    // ERR_SSL_PROTOCOL_ERROR, blanking the workspace.
-    expect(createContentSecurityPolicy("n", false)).toContain("upgrade-insecure-requests");
-    expect(createContentSecurityPolicy("n", true)).not.toContain("upgrade-insecure-requests");
+  it("upgrades insecure subresources only when production is served over HTTPS", () => {
+    expect(createContentSecurityPolicy("n", false, true)).toContain("upgrade-insecure-requests");
+    expect(createContentSecurityPolicy("n", false, false)).not.toContain("upgrade-insecure-requests");
+    expect(createContentSecurityPolicy("n", true, true)).not.toContain("upgrade-insecure-requests");
+  });
+
+  it("derives the external protocol from the trusted reverse-proxy header", () => {
+    expect(requestUsesHttps("http:", null)).toBe(false);
+    expect(requestUsesHttps("https:", null)).toBe(true);
+    expect(requestUsesHttps("http:", "https")).toBe(true);
+    expect(requestUsesHttps("https:", "http")).toBe(false);
+    expect(requestUsesHttps("http:", " HTTPS, http")).toBe(true);
   });
 
   it("opens the HMR websocket in development only", () => {
-    expect(createContentSecurityPolicy("n", true)).toContain("connect-src 'self' ws: wss:");
-    expect(createContentSecurityPolicy("n", false)).toContain("connect-src 'self';");
+    expect(createContentSecurityPolicy("n", true, false)).toContain("connect-src 'self' ws: wss:");
+    expect(createContentSecurityPolicy("n", false, true)).toContain("connect-src 'self';");
   });
 
   it("permits eval only for the React development toolchain", () => {
-    expect(createContentSecurityPolicy("test-nonce", true)).toContain("'unsafe-eval'");
+    expect(createContentSecurityPolicy("test-nonce", true, false)).toContain("'unsafe-eval'");
   });
 });

@@ -11,11 +11,16 @@ const product = {
   selling_price: "4.0000",
   is_active: true,
 };
+const lookupProduct = { ...product, id: "product-2", sku: "TEA-2", name: "Green Tea" };
 const unit = { id: "unit-1", code: "EACH", name: "Each", precision: 0 };
 const warehouse = { id: "warehouse-1", code: "MAIN", name: "Main Store" };
 
 function responseFor(path: string) {
-  if (path.endsWith("products/")) return { items: [product] };
+  if (path.includes("products/")) {
+    return path.includes("page=2")
+      ? { items: [lookupProduct], total: 2, total_pages: 2 }
+      : { items: [product], total: 2, total_pages: 2 };
+  }
   if (path.endsWith("units/")) return { items: [unit] };
   if (path.endsWith("warehouses/")) return { items: [warehouse] };
   if (path.endsWith("inventory/balances/")) {
@@ -24,7 +29,7 @@ function responseFor(path: string) {
         {
           id: "balance-1",
           warehouse_id: warehouse.id,
-          product_id: product.id,
+          product_id: lookupProduct.id,
           quantity_on_hand: "7.000000",
           reserved_quantity: "2.000000",
           available: "5.000000",
@@ -53,6 +58,8 @@ describe("CatalogInventoryPanel", () => {
     render(<CatalogInventoryPanel />);
 
     expect((await screen.findAllByText("Black Tea"))[0]).toBeVisible();
+    expect(screen.getAllByText("Green Tea")[0]).toBeVisible();
+    expect(screen.queryByText("Unknown product")).not.toBeInTheDocument();
     expect(screen.getByText("TEA-1")).toBeVisible();
     expect(screen.getByText("7.000000")).toBeVisible();
     expect(screen.getByText("5.000000")).toBeVisible();
