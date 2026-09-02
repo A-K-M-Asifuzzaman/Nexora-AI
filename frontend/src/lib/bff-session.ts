@@ -106,7 +106,14 @@ function decrypt(value: string): Session | null {
 }
 
 async function client(): Promise<RedisClientType> {
-  if (!redis) redis = createClient({ url: process.env.BFF_REDIS_URL ?? "redis://localhost:6379/3" });
+  // Without an explicit connectTimeout, a Redis this can't reach at all
+  // (wrong network, unresolvable host) hangs on the underlying TCP connect
+  // far longer than any caller should wait, instead of failing — every
+  // request touching a session (login included) would hang with it.
+  if (!redis) redis = createClient({
+    url: process.env.BFF_REDIS_URL ?? "redis://localhost:6379/3",
+    socket: { connectTimeout: 5_000 },
+  });
   if (!redis.isOpen) await redis.connect();
   return redis;
 }
