@@ -122,9 +122,19 @@ export async function proxyUpstream(request: Request, path: string[]): Promise<R
     : contentType.includes("multipart/form-data")
       ? await request.arrayBuffer()
       : await request.text();
+  // Idempotency-Key is forwarded, not just Content-Type/Authorization/
+  // X-Request-ID: several backend writes require it (checkout, invoice/bill
+  // issue, payments) and reject a request without one — dropping it here
+  // silently broke every one of those end-to-end through this proxy.
+  const idempotencyKey = request.headers.get("Idempotency-Key");
   const call = (token: string) => fetch(url, {
     method: request.method,
-    headers: { "Content-Type": request.headers.get("content-type") ?? "application/json", Authorization: `Bearer ${token}`, "X-Request-ID": request.headers.get("X-Request-ID") ?? crypto.randomUUID() },
+    headers: {
+      "Content-Type": request.headers.get("content-type") ?? "application/json",
+      Authorization: `Bearer ${token}`,
+      "X-Request-ID": request.headers.get("X-Request-ID") ?? crypto.randomUUID(),
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+    },
     body,
     cache: "no-store",
   });
@@ -147,7 +157,11 @@ export async function proxyUpstream(request: Request, path: string[]): Promise<R
     response = await call(outcome.accessToken);
   }
   const payload = await response.text();
-  if (payload && response.headers.get("content-type")?.includes("application/json")) {
+  // `payload` is the string "null" for an endpoint whose response_model is
+  // Optional and has nothing to return (e.g. "does this terminal have an
+  // open session?") — truthy as a string, but `JSON.parse` yields the value
+  // `null`, not an object, and `json.access_token` below would throw.
+  if (payload && payload !== "null" && response.headers.get("content-type")?.includes("application/json")) {
     const json = JSON.parse(payload) as Record<string, unknown>;
     if (typeof json.access_token === "string") {
       const latest = await readSession();
