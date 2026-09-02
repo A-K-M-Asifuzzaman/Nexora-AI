@@ -1,7 +1,8 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { cookies } from "next/headers";
-import { createClient, type RedisClientType } from "redis";
+import { Redis as UpstashRedis } from "@upstash/redis";
+import { createClient } from "redis";
 
 import { isSameOrigin } from "./bff-public";
 
@@ -70,7 +71,92 @@ if (!(REFRESH_TIMEOUT_MS < REFRESH_LOCK_TTL_MS && REFRESH_LOCK_TTL_MS < REFRESH_
   );
 }
 
-let redis: RedisClientType | undefined;
+type SetOpts = { ex?: number; nx?: boolean; px?: number };
+
+type Store = {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, opts?: SetOpts): Promise<string | null>;
+  del(key: string): Promise<number>;
+  eval(script: string, keys: string[], args: string[]): Promise<unknown>;
+};
+
+class UpstashStore implements Store {
+  private readonly client: UpstashRedis;
+  constructor(url: string, token: string) {
+    // The session value is our own encrypted, non-JSON payload — never let
+    // the SDK try to JSON-parse it back out.
+    this.client = new UpstashRedis({ url, token, automaticDeserialization: false });
+  }
+  get(key: string) { return this.client.get<string>(key); }
+  set(key: string, value: string, opts?: SetOpts) {
+    // Upstash's SetCommandOptions is a discriminated union (ex XOR px, nx
+    // XOR xx, ...) that can't structurally accept a plain `{ex?, nx?, px?}`
+    // bag. Every call site here only ever passes one of {ex} or {nx, px},
+    // never a conflicting mix, so this cast is safe in practice.
+    return this.client.set(key, value, (opts ?? {}) as Parameters<UpstashRedis["set"]>[2]);
+  }
+  del(key: string) { return this.client.del(key); }
+  eval(script: string, keys: string[], args: string[]) { return this.client.eval(script, keys, args); }
+}
+
+// Fallback for when Upstash isn't configured: plain node-redis over TCP.
+// Deliberately never cached across calls. A client cached per warm
+// serverless instance (the previous approach) has no lifecycle hook that
+// ever closes it, and Vercel creates far more instances under concurrent
+// load than any pool would reclaim — that leak pegged Render's free-tier
+// Redis at its connection cap and made login hang indefinitely (P1, found
+// live on the deployed demo). A fresh connect-per-call costs a TLS/TCP
+// handshake on every Redis operation, but nothing can outlive the single
+// call that opened it, so the leak is structurally impossible here too.
+class TcpFallbackStore implements Store {
+  constructor(private readonly url: string) {}
+
+  async get(key: string) {
+    const client = createClient({ url: this.url, socket: { connectTimeout: 5_000 } });
+    try {
+      await client.connect();
+      return await client.get(key);
+    } finally {
+      await client.destroy();
+    }
+  }
+
+  async set(key: string, value: string, opts?: SetOpts) {
+    const client = createClient({ url: this.url, socket: { connectTimeout: 5_000 } });
+    try {
+      await client.connect();
+      return await client.set(key, value, {
+        ...(opts?.ex !== undefined ? { EX: opts.ex } : {}),
+        ...(opts?.nx ? { NX: true } : {}),
+        ...(opts?.px !== undefined ? { PX: opts.px } : {}),
+      });
+    } finally {
+      await client.destroy();
+    }
+  }
+
+  async del(key: string) {
+    const client = createClient({ url: this.url, socket: { connectTimeout: 5_000 } });
+    try {
+      await client.connect();
+      return await client.del(key);
+    } finally {
+      await client.destroy();
+    }
+  }
+
+  async eval(script: string, keys: string[], args: string[]) {
+    const client = createClient({ url: this.url, socket: { connectTimeout: 5_000 } });
+    try {
+      await client.connect();
+      return await client.eval(script, { keys, arguments: args });
+    } finally {
+      await client.destroy();
+    }
+  }
+}
+
+let redis: Store | undefined;
 
 function secret(): string {
   const value = process.env.BFF_SESSION_SECRET;
@@ -105,16 +191,24 @@ function decrypt(value: string): Session | null {
   }
 }
 
-async function client(): Promise<RedisClientType> {
-  // Without an explicit connectTimeout, a Redis this can't reach at all
-  // (wrong network, unresolvable host) hangs on the underlying TCP connect
-  // far longer than any caller should wait, instead of failing — every
-  // request touching a session (login included) would hang with it.
-  if (!redis) redis = createClient({
-    url: process.env.BFF_REDIS_URL ?? "redis://localhost:6379/3",
-    socket: { connectTimeout: 5_000 },
-  });
-  if (!redis.isOpen) await redis.connect();
+// Upstash is preferred — its client talks REST per call, so there is no
+// persistent connection for a horizontally-scaled platform like Vercel to
+// leak (see UpstashStore/TcpFallbackStore above for the full story). Falls
+// back to the existing TCP Redis when Upstash credentials aren't set up
+// yet, so this upgrades automatically the moment they are, with no further
+// code change.
+function client(): Store {
+  if (!redis) {
+    const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
+    const token = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (url && token) {
+      redis = new UpstashStore(url, token);
+    } else {
+      const tcpUrl = process.env.BFF_REDIS_URL;
+      if (!tcpUrl) throw new Error("Neither Upstash REST credentials nor BFF_REDIS_URL are configured");
+      redis = new TcpFallbackStore(tcpUrl);
+    }
+  }
   return redis;
 }
 
@@ -131,7 +225,7 @@ export async function readSession(): Promise<{ id: string; session: Session } | 
   const jar = await cookies();
   const id = validSignedId(jar.get(SESSION_COOKIE)?.value);
   if (!id) return null;
-  const raw = await (await client()).get(`bff:session:${id}`);
+  const raw = await client().get(`bff:session:${id}`);
   const session = raw ? decrypt(raw) : null;
   return session ? { id, session } : null;
 }
@@ -144,8 +238,8 @@ export async function writeSession(
   const jar = await cookies();
   const current = validSignedId(jar.get(SESSION_COOKIE)?.value);
   const id = current ?? randomBytes(32).toString("base64url");
-  await (await client()).set(`bff:session:${id}`, encrypt({ accessToken, refreshToken, activeTenantId: activeTenantId ?? null }), {
-    EX: SESSION_SECONDS,
+  await client().set(`bff:session:${id}`, encrypt({ accessToken, refreshToken, activeTenantId: activeTenantId ?? null }), {
+    ex: SESSION_SECONDS,
   });
   const secure = process.env.NODE_ENV === "production";
   jar.set(SESSION_COOKIE, `${id}.${sign(id)}`, { httpOnly: true, sameSite: "lax", secure, path: "/", maxAge: SESSION_SECONDS });
@@ -155,7 +249,7 @@ export async function writeSession(
 export async function clearSession(): Promise<void> {
   const jar = await cookies();
   const id = validSignedId(jar.get(SESSION_COOKIE)?.value);
-  if (id) await (await client()).del(`bff:session:${id}`);
+  if (id) await client().del(`bff:session:${id}`);
   jar.delete(SESSION_COOKIE);
   jar.delete(REFRESH_COOKIE);
   jar.delete(CSRF_COOKIE);
@@ -177,23 +271,26 @@ export async function clearSession(): Promise<void> {
  */
 export async function acquireRefreshLock(id: string): Promise<string | null> {
   const owner = randomBytes(32).toString("base64url");
-  const result = await (await client()).set(`bff:refresh-lock:${id}`, owner, {
-    NX: true,
-    PX: REFRESH_LOCK_TTL_MS,
+  const result = await client().set(`bff:refresh-lock:${id}`, owner, {
+    nx: true,
+    px: REFRESH_LOCK_TTL_MS,
   });
   return result === "OK" ? owner : null;
 }
 
 export async function releaseRefreshLock(id: string, owner: string): Promise<void> {
-  await (await client()).eval(
+  await client().eval(
     "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
-    { keys: [`bff:refresh-lock:${id}`], arguments: [owner] },
+    [`bff:refresh-lock:${id}`],
+    [owner],
   );
 }
 
 export async function closeSessionStore(): Promise<void> {
-  if (!redis) return;
-  if (redis.isOpen) await redis.close();
+  // Both Store implementations either hold no persistent connection
+  // (Upstash) or close it on every call (TcpFallbackStore) — nothing to
+  // disconnect here. This only resets the singleton so tests can rebuild it
+  // against a fresh mocked URL/token between runs.
   redis = undefined;
 }
 
