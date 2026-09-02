@@ -360,7 +360,7 @@ async def _seed_quotations(
                     LineInput(
                         product_id=product_ids[(index * 11) % len(product_ids)],
                         quantity="3",
-                        unit_price="79.99",
+                        unit_price="9600.00",
                         tax_rate="0.10",
                     )
                 ],
@@ -722,8 +722,8 @@ async def _ensure_tenant_and_membership(session: AsyncSession, user: User) -> tu
             TenantCreate(
                 name="Nexora Demo Traders",
                 slug=DEMO_TENANT_SLUG,
-                base_currency="USD",
-                timezone="UTC",
+                base_currency="BDT",
+                timezone="Asia/Dhaka",
                 default_branch_code="MAIN",
                 default_branch_name="Head Office",
                 default_warehouse_code="WH1",
@@ -998,7 +998,7 @@ async def main() -> None:
                             OpportunityCreate(
                                 customer_id=customer_ids[(i - 1) % len(customer_ids)],
                                 name=name,
-                                amount=Decimal(str(2500 + i * 50)),
+                                amount=Decimal(str(300000 + i * 6000)),
                                 probability=Decimal("0.35"),
                             )
                         )
@@ -1035,13 +1035,13 @@ async def main() -> None:
                                     LineInput(
                                         product_id=p1,
                                         quantity="1",
-                                        unit_price="49.99",
+                                        unit_price="6000.00",
                                         tax_rate="0.10",
                                     ),
                                     LineInput(
                                         product_id=p2,
                                         quantity="2",
-                                        unit_price="29.99",
+                                        unit_price="3600.00",
                                         tax_rate="0.10",
                                     ),
                                 ],
