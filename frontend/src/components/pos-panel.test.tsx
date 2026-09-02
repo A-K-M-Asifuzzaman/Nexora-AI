@@ -11,7 +11,7 @@ describe("PosPanel", () => {
     vi.stubGlobal("crypto", { randomUUID: () => "checkout-key" });
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
       const path = String(input);
-      const body = path.endsWith("products/") ? { items: [product] } : path.endsWith("pos/terminals/") ? [{ id: "terminal-1", code: "T1", name: "Front till" }] : path.endsWith("pos/sessions/open") ? { id: "session-1", session_number: "SHIFT-1", status: "OPEN" } : path.endsWith("pos/checkout") ? { id: "sale-1", sale_number: "SALE-1", total_amount: "10.0000" } : [];
+      const body = path.endsWith("products/") ? { items: [product] } : path.endsWith("pos/terminals/") ? [{ id: "terminal-1", code: "T1", name: "Front till" }] : path.includes("pos/terminals/") && path.endsWith("/session") ? null : path.endsWith("pos/sessions/open") ? { id: "session-1", session_number: "SHIFT-1", status: "OPEN" } : path.endsWith("pos/checkout") ? { id: "sale-1", sale_number: "SALE-1", total_amount: "10.0000" } : [];
       return { ok: true, json: async () => body };
     }));
   });
